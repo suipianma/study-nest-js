@@ -48,11 +48,27 @@ export class AuthService {
     }
 
     // 生成 token
-    const token = this.jwtService.sign({ userId: user.id, username: user.username, role: user.role  });
+    // const token = this.jwtService.sign({ userId: user.id, username: user.username, role: user.role  });
+    const accessToken = this.jwtService.sign( { userId: user.id, username: user.username, role: user.role  }, { secret: process.env.JWT_ACCESS_SECRET, expiresIn: process.env.JWT_ACCESS_EXPIRES_IN as any });
+    const refreshToken = this.jwtService.sign({ userId: user.id, username: user.username, role: user.role  }, { secret: process.env.JWT_REFRESH_SECRET, expiresIn: process.env.JWT_REFRESH_EXPIRES_IN as any });
 
     return {
-      username: user.username,
-      accessToken: token,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
     };
+  }
+
+  async refresh(refreshToken: string) {
+    try {
+      const payload = this.jwtService.verify(refreshToken, { secret: process.env.JWT_REFRESH_SECRET });
+      // verify 返回的 payload 含 iat/exp，不能直接用于 sign，否则会报错
+      const { iat, exp, ...userPayload } = payload as { iat?: number; exp?: number; userId: number; username: string; role: string };
+      const accessToken = this.jwtService.sign(userPayload, { secret: process.env.JWT_ACCESS_SECRET, expiresIn: process.env.JWT_ACCESS_EXPIRES_IN as any });
+      return {
+        accessToken: accessToken,
+      };
+    } catch (error) {
+      throw new BadGatewayException('refreshToken 无效');
+    }
   }
 }

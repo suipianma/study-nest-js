@@ -20,4 +20,10 @@ export class AuthController {
   login(@Body() body: LoginDto) {
     return this.authService.login(body);
   }
+
+  @ApiOperation({ summary: '刷新token' })
+  @Post('refresh')
+  refresh(@Body() body: {refreshToken: string}) {
+    return this.authService.refresh(body.refreshToken);
+  }
 }
