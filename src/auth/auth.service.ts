@@ -1,4 +1,4 @@
-import { Injectable, BadGatewayException } from '@nestjs/common';
+import { Injectable, BadGatewayException, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
@@ -8,10 +8,39 @@ import { RedisService } from 'src/redis/redis.service';
 
 @Injectable()
 export class AuthService {
+  // 同一 IP 登录失败上限与锁定时长（秒）
+  private readonly LOGIN_FAIL_MAX = 5;
+  private readonly LOGIN_FAIL_TTL = 15 * 60;
+
   constructor(private readonly prisma: PrismaService, 
     private readonly jwtService: JwtService,
     private readonly redisService: RedisService
   ) {}
+
+  // 检查 IP 是否已被锁定
+  private async checkIpLoginLimit(ip: string) {
+    const isLocked = await this.redisService.redis.get(`login:lock:${ip}`);
+    if (isLocked) {
+      throw new HttpException('登录尝试次数过多，请15分钟后再试', HttpStatus.TOO_MANY_REQUESTS);
+    }
+  }
+
+  // 记录登录失败，达到上限则锁定 IP
+  private async recordLoginFailure(ip: string) {
+    const failKey = `login:fail:${ip}`;
+    const count = await this.redisService.redis.incr(failKey);
+    if (count === 1) {
+      await this.redisService.redis.expire(failKey, this.LOGIN_FAIL_TTL);
+    }
+    if (count >= this.LOGIN_FAIL_MAX) {
+      await this.redisService.redis.set(`login:lock:${ip}`, '1', 'EX', this.LOGIN_FAIL_TTL);
+    }
+  }
+
+  // 登录成功后清除 IP 失败记录
+  private async clearLoginFailure(ip: string) {
+    await this.redisService.redis.del(`login:fail:${ip}`, `login:lock:${ip}`);
+  }
 
   // 注册
   async register(body: RegisterDto) {
@@ -36,31 +65,46 @@ export class AuthService {
   }
 
   // 登录
-  async login(body: LoginDto) {
+  async login(body: LoginDto, ip: string) {
     const { username, password } = body;
+
+    // IP 登录限制：失败次数过多则拒绝
+    await this.checkIpLoginLimit(ip);
 
     // 查询用户
     const user = await this.prisma.user.findUnique({
       where: { username },
     });
     if (!user) {
+      await this.recordLoginFailure(ip);
       throw new BadGatewayException('用户不存在');
     }
 
     // 验证密码
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
+      await this.recordLoginFailure(ip);
       throw new BadGatewayException('密码错误');
     }
 
+    // 登录成功，清除该 IP 的失败记录
+    await this.clearLoginFailure(ip);
+
     // 生成 token
-    // const token = this.jwtService.sign({ userId: user.id, username: user.username, role: user.role  });
     const accessToken = this.jwtService.sign( { userId: user.id, username: user.username, role: user.role  }, { secret: process.env.JWT_ACCESS_SECRET, expiresIn: process.env.JWT_ACCESS_EXPIRES_IN as any });
     const refreshToken = this.jwtService.sign({ userId: user.id, username: user.username, role: user.role  }, { secret: process.env.JWT_REFRESH_SECRET, expiresIn: process.env.JWT_REFRESH_EXPIRES_IN as any });
 
     await this.redisService.redis.set(
       `refreshToken:${user.id}`,
       refreshToken,
+      'EX',
+      7 * 24 * 60 * 60,
+    );
+
+    // 记录用户最近一次登录 IP
+    await this.redisService.redis.set(
+      `login:ip:${user.id}`,
+      ip,
       'EX',
       7 * 24 * 60 * 60,
     );
