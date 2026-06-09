@@ -26,4 +26,10 @@ export class AuthController {
   refresh(@Body() body: {refreshToken: string}) {
     return this.authService.refresh(body.refreshToken);
   }
+
+  @ApiOperation({ summary: '退出登录' })
+  @Post('logout')
+  logout(@Body() body: {userId: number}) {
+    return this.authService.logout(body.userId);
+  }
 }
