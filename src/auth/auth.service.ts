@@ -2,12 +2,14 @@ import { Injectable, BadGatewayException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
+import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
 
 @Injectable()
 export class AuthService {
   constructor(private readonly prisma: PrismaService, private readonly jwtService: JwtService) {}
 
-  async register(body: any) {
+  async register(body: RegisterDto) {
     const { username, password } = body;
 
     // 查询用户
@@ -28,7 +30,7 @@ export class AuthService {
     return user;
   }
 
-  async login(body: any) {
+  async login(body: LoginDto) {
     const { username, password } = body;
 
     // 查询用户
