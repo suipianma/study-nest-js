@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ResponseInterceptor } from './common/interceptors/response.interceptors';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -12,6 +13,9 @@ async function bootstrap() {
     forbidNonWhitelisted: true,  //如果定义了没定义的字段，则抛出异常
     transform: true,  //自动转换类型
   }));
+
+  // 全局拦截器 统一响应格式
+  app.useGlobalInterceptors(new ResponseInterceptor());
 
   // 设置swagger文档 方便前端开发人员查看接口文档(自动生成接口文档)
   const config = new DocumentBuilder()
