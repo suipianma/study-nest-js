@@ -25,7 +25,7 @@ export class AuthService {
 
     // 创建用户
     const user = await this.prisma.user.create({
-      data: { username, password: hashedPassword },
+      data: { username, password: hashedPassword, role: 'user'},
     });
     return user;
   }
@@ -48,7 +48,7 @@ export class AuthService {
     }
 
     // 生成 token
-    const token = this.jwtService.sign({ userId: user.id });
+    const token = this.jwtService.sign({ userId: user.id, username: user.username, role: user.role  });
 
     return {
       username: user.username,

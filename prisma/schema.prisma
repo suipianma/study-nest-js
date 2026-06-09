@@ -11,5 +11,6 @@ model User {
   id        Int      @id @default(autoincrement())
   username  String   @unique
   password  String
+  role      String   @default("user")
   createdAt DateTime @default(now())
 }

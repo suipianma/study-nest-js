@@ -4,6 +4,8 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { RolesGuard } from 'src/common/guards/roles.guard';
 
 @Controller('users')
 @ApiTags('用户模块')
@@ -16,9 +18,10 @@ export class UserController {
     return this.userService.create(createUserDto);
   }
   
+  @Roles('admin')
   @ApiBearerAuth()
   @ApiOperation({ summary: '获取所有用户' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Get()
   findAll() {
     return this.userService.findAll();
