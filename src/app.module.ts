@@ -11,6 +11,7 @@ import { LoggerModule } from './common/logger/logger.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 import { UploadModule } from './upload/upload.module';
 import { ChatModule } from './chat/chat.module';
+import { AiController } from './ai/ai.controller';
 
 @Module({
   imports: [
@@ -24,7 +25,7 @@ import { ChatModule } from './chat/chat.module';
     }]), 
     LoggerModule, UploadModule, ChatModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, AiController],
   providers: [
     AppService,
     LoggerMiddleware,
