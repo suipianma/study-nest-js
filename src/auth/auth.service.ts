@@ -1,24 +1,31 @@
-import { Injectable, BadGatewayException, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, BadGatewayException, HttpException, HttpStatus, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RedisService } from 'src/redis/redis.service';
+import { Logger } from 'winston';
+import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+
+
 
 @Injectable()
 export class AuthService {
   // 同一 IP 登录失败上限与锁定时长（秒）
   private readonly LOGIN_FAIL_MAX = 5;
   private readonly LOGIN_FAIL_TTL = 15 * 60;
-
-  constructor(private readonly prisma: PrismaService, 
+ 
+  constructor(
+    private readonly prisma: PrismaService, 
     private readonly jwtService: JwtService,
-    private readonly redisService: RedisService
+    private readonly redisService: RedisService,
+    @Inject(WINSTON_MODULE_PROVIDER) private logger: Logger
   ) {}
 
   // 检查 IP 是否已被锁定
   private async checkIpLoginLimit(ip: string) {
+    this.logger.info(`检查 IP 是否已被锁定: ${ip}`);
     const isLocked = await this.redisService.redis.get(`login:lock:${ip}`);
     if (isLocked) {
       throw new HttpException('登录尝试次数过多，请15分钟后再试', HttpStatus.TOO_MANY_REQUESTS);
