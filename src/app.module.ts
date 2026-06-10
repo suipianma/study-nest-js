@@ -9,6 +9,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { LoggerModule } from './common/logger/logger.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
+import { UploadModule } from './upload/upload.module';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
       ttl: 60000, // 60秒
       limit: 10, // 10次
     }]), 
-    LoggerModule,
+    LoggerModule, UploadModule,
   ],
   controllers: [AppController],
   providers: [

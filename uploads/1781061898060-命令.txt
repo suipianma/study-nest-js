@@ -1,0 +1,26 @@
+创建nestjs脚手架：npm i -g @nestjs/cli
+创建nest项目：nest new 项目名称
+nest g mo 文件名称
+nest g co 文件名称
+nest g s 文件名称
+nest g resource 文件名称
+nest g class auth/jwt.strategy
+
+
+pnpm add prisma @prisma/client
+npx prisma init  创建prisma
+npx prisma generate prisma生成
+npx prisma migrate dev --name add_role
+
+
+pnpm add -D @types/passport-jwt @types/bcrypt
+pnpm add @nestjs/jwt @nestjs/passport passport passport-jwt bcrypt
+pnpm add prisma@6 @prisma/client@6  
+pnpm add class-validator class-transformer
+pnpm add @nestjs/swagger swagger-ui-express
+pnpm add ioredis
+pnpm add @nestjs/throttler
+pnpm add winston nest-winston
+NestJS Middleware
+pnpm add @nestjs/platform-express multer
+pnpm add -D @types/multer
