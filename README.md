@@ -1,98 +1,189 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# study-nest-js
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+基于 NestJS 11 的后端学习项目，当前实现了用户认证、用户管理、文件上传、Redis 缓存、Socket.IO 消息推送、SSE 示例、Swagger 接口文档和 Prisma/MySQL 数据访问。
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## 技术栈
 
-## Description
+- NestJS 11
+- TypeScript
+- Prisma + MySQL
+- JWT + Passport
+- Redis + ioredis
+- Socket.IO
+- Swagger
+- Winston
+- Docker / Docker Compose
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 目录结构
 
-## Project setup
-
-```bash
-$ pnpm install
+```text
+src
+├── ai                 # SSE 示例接口
+├── auth               # 注册、登录、刷新 token、退出登录
+├── chat               # WebSocket 消息与服务端推送
+├── common             # 装饰器、守卫、过滤器、拦截器、日志中间件
+├── prisma             # PrismaService / PrismaModule
+├── redis              # Redis 连接封装
+├── upload             # 文件上传
+├── user               # 用户 CRUD
+├── app.module.ts      # 根模块
+└── main.ts            # 应用入口、全局管道、Swagger、静态资源
 ```
 
-## Compile and run the project
+## 环境要求
+
+- Node.js 20+
+- pnpm
+- MySQL 8
+- Redis 7
+
+## 环境变量
+
+复制 `.env.copy` 为 `.env`，并按本地环境调整配置：
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+cp .env.copy .env
 ```
 
-## Run tests
+当前项目使用的变量如下：
+
+```env
+DATABASE_URL="mysql://root:qwer1234@localhost:3306/ai_admin"
+JWT_ACCESS_SECRET="xiaoyao_ai_admin_access_secret"
+JWT_ACCESS_EXPIRES_IN="30m"
+JWT_REFRESH_SECRET="xiaoyao_ai_admin_refresh_secret"
+JWT_REFRESH_EXPIRES_IN="7d"
+APP_URL="http://localhost:3000"
+REDIS_HOST="localhost"
+```
+
+如果使用 `docker-compose.yml` 启动应用、MySQL 和 Redis，应用容器内的服务名需要使用 Docker Compose 网络地址：
+
+```env
+DATABASE_URL="mysql://root:qwer1234@mysql:3306/ai_admin"
+REDIS_HOST="redis"
+```
+
+## 安装依赖
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+pnpm install
 ```
 
-## Deployment
+## 数据库初始化
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+项目使用 Prisma 管理 MySQL 表结构，当前包含 `User` 表及 `role` 字段。
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+# 生成 Prisma Client
+pnpm prisma generate
+
+# 执行已有迁移
+pnpm prisma migrate deploy
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+开发阶段如需创建新的迁移：
 
-## Resources
+```bash
+pnpm prisma migrate dev
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+## 启动项目
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```bash
+# 普通启动
+pnpm run start
 
-## Support
+# 开发监听模式
+pnpm run start:dev
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+# 生产构建
+pnpm run build
 
-## Stay in touch
+# 运行构建产物
+pnpm run start:prod
+```
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+服务默认监听 `http://localhost:3000`。
+
+## Docker 启动
+
+```bash
+docker compose up -d --build
+```
+
+`docker-compose.yml` 会启动：
+
+- `app`：NestJS 应用，映射 `3000:3000`
+- `mysql`：MySQL 8，默认数据库 `ai_admin`
+- `redis`：Redis 7，映射 `6379:6379`
+
+## 接口文档
+
+启动服务后访问 Swagger：
+
+```text
+http://localhost:3000/docs
+```
+
+## 已有功能
+
+- 认证模块：注册、登录、刷新 token、退出登录
+- 登录保护：登录失败会基于 IP 记录到 Redis，超过限制后短时间锁定
+- 用户模块：用户创建、查询、更新、删除，其中用户列表接口需要 JWT 和 `admin` 角色
+- 文件上传：上传后文件保存到 `uploads` 目录，可通过 `/uploads/...` 静态访问
+- 聊天模块：Socket.IO 连接鉴权、消息回复、HTTP 接口主动广播
+- SSE 示例：`/ai/stream` 和 `/ai/chat`
+- 全局处理：参数校验、统一响应格式、HTTP 异常格式化、请求日志
+
+## 常用接口
+
+```text
+POST   /auth/register
+POST   /auth/login
+POST   /auth/refresh
+POST   /auth/logout
+
+POST   /users
+GET    /users
+GET    /users/:id
+PATCH  /users/:id
+DELETE /users/:id
+
+POST   /upload
+POST   /chat/push
+GET    /ai/stream
+GET    /ai/chat
+```
+
+## WebSocket
+
+服务使用 Socket.IO，连接时会通过 `WsJwtGuard` 校验 JWT。客户端需要通过 `handshake.auth.token` 或 `Authorization: Bearer <token>` 携带有效 access token。
+
+已连接客户端可监听：
+
+- `reply`：服务端对 `message` 事件的回复
+- `push`：服务端广播推送
+
+## 测试与代码检查
+
+```bash
+# 单元测试
+pnpm run test
+
+# e2e 测试
+pnpm run test:e2e
+
+# 覆盖率
+pnpm run test:cov
+
+# ESLint 自动修复
+pnpm run lint
+
+# Prettier 格式化
+pnpm run format
+```
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+UNLICENSED
