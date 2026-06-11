@@ -11,6 +11,11 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const configService = app.get(ConfigService);
 
+  app.enableCors({
+    origin: "http://localhost:3001",
+    credentials: true,
+  });
+
   // 静态资源：上传文件可通过 /uploads/xxx 直接访问
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads',
