@@ -12,7 +12,10 @@ import { RolesGuard } from 'src/common/guards/roles.guard';
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
+  @Roles('admin')
+  @ApiBearerAuth()
   @ApiOperation({ summary: '创建用户' })
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
     return this.userService.create(createUserDto);
@@ -27,19 +30,28 @@ export class UserController {
     return this.userService.findAll();
   }
 
+  @Roles('admin')
+  @ApiBearerAuth()
   @ApiOperation({ summary: '获取单个用户' })
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.userService.findOne(+id);
   }
 
+  @Roles('admin')
+  @ApiBearerAuth()
   @ApiOperation({ summary: '更新用户' })
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
     return this.userService.update(+id, updateUserDto);
   }
 
+  @Roles('admin')
+  @ApiBearerAuth()
   @ApiOperation({ summary: '删除用户' })
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.userService.remove(+id);
