@@ -39,11 +39,7 @@ src
 
 ## 环境变量
 
-复制 `.env.copy` 为 `.env`，并按本地环境调整配置：
-
-```bash
-cp .env.copy .env
-```
+本地开发脚本通过 `node --env-file=.env.dev` 读取 `.env.dev`，Docker Compose 通过 `env_file: .env.docker` 读取 `.env.docker`，不需要手动复制 `.env`。
 
 当前项目使用的变量如下：
 
@@ -55,6 +51,7 @@ JWT_REFRESH_SECRET="xiaoyao_ai_admin_refresh_secret"
 JWT_REFRESH_EXPIRES_IN="7d"
 APP_URL="http://localhost:3000"
 REDIS_HOST="localhost"
+REDIS_PORT=6379
 ```
 
 如果使用 `docker-compose.yml` 启动应用、MySQL 和 Redis，应用容器内的服务名需要使用 Docker Compose 网络地址：
@@ -62,54 +59,70 @@ REDIS_HOST="localhost"
 ```env
 DATABASE_URL="mysql://root:qwer1234@mysql:3306/ai_admin"
 REDIS_HOST="redis"
+REDIS_PORT=6379
 ```
 
-## 安装依赖
+## 本地运行
+
+本地运行需要先准备本机的 MySQL 8 和 Redis 7，并确保 `.env.dev` 中的连接地址可用：
+
+```env
+DATABASE_URL="mysql://root:qwer1234@localhost:3306/ai_admin"
+REDIS_HOST="localhost"
+REDIS_PORT=6379
+```
 
 ```bash
+# 安装依赖
 pnpm install
-```
 
-## 数据库初始化
-
-项目使用 Prisma 管理 MySQL 表结构，当前包含 `User` 表及 `role` 字段。
-
-```bash
 # 生成 Prisma Client
-pnpm prisma generate
+pnpm run prisma:generate
 
 # 执行已有迁移
-pnpm prisma migrate deploy
+pnpm run prisma:migrate
+
+# 开发监听模式启动
+pnpm run start:dev
 ```
 
 开发阶段如需创建新的迁移：
 
 ```bash
-pnpm prisma migrate dev
+pnpm run prisma:migrate:dev
 ```
 
-## 启动项目
+生产方式本地运行：
 
 ```bash
-# 普通启动
-pnpm run start
-
-# 开发监听模式
-pnpm run start:dev
-
-# 生产构建
 pnpm run build
-
-# 运行构建产物
 pnpm run start:prod
 ```
 
 服务默认监听 `http://localhost:3000`。
 
-## Docker 启动
+## Docker 运行
+
+Docker Compose 会同时启动应用、MySQL 和 Redis。应用容器读取 `.env.docker`，其中 MySQL 和 Redis 地址使用 Compose 服务名：
+
+```env
+DATABASE_URL="mysql://root:qwer1234@mysql:3306/ai_admin"
+REDIS_HOST="redis"
+REDIS_PORT=6379
+```
 
 ```bash
+# 构建并启动全部服务
 docker compose up -d --build
+
+# 首次启动或迁移更新后，执行数据库迁移
+docker compose exec app npx prisma migrate deploy
+
+# 查看服务状态
+docker compose ps
+
+# 查看应用日志
+docker compose logs -f app
 ```
 
 `docker-compose.yml` 会启动：
@@ -117,6 +130,12 @@ docker compose up -d --build
 - `app`：NestJS 应用，映射 `3000:3000`
 - `mysql`：MySQL 8，默认数据库 `ai_admin`
 - `redis`：Redis 7，映射 `6379:6379`
+
+停止 Docker 服务：
+
+```bash
+docker compose down
+```
 
 ## 接口文档
 

@@ -7,6 +7,7 @@ import { LoginDto } from './dto/login.dto';
 import { RedisService } from 'src/redis/redis.service';
 import { Logger } from 'winston';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { ConfigService } from '@nestjs/config';
 
 
 
@@ -20,8 +21,23 @@ export class AuthService {
     private readonly prisma: PrismaService, 
     private readonly jwtService: JwtService,
     private readonly redisService: RedisService,
+    private readonly configService: ConfigService,
     @Inject(WINSTON_MODULE_PROVIDER) private logger: Logger
   ) {}
+
+  private getAccessTokenOptions() {
+    return {
+      secret: this.configService.getOrThrow<string>('JWT_ACCESS_SECRET'),
+      expiresIn: this.configService.getOrThrow<string>('JWT_ACCESS_EXPIRES_IN') as any,
+    };
+  }
+
+  private getRefreshTokenOptions() {
+    return {
+      secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
+      expiresIn: this.configService.getOrThrow<string>('JWT_REFRESH_EXPIRES_IN') as any,
+    };
+  }
 
   // 检查 IP 是否已被锁定
   private async checkIpLoginLimit(ip: string) {
@@ -98,8 +114,14 @@ export class AuthService {
     await this.clearLoginFailure(ip);
 
     // 生成 token
-    const accessToken = this.jwtService.sign( { userId: user.id, username: user.username, role: user.role  }, { secret: process.env.JWT_ACCESS_SECRET, expiresIn: process.env.JWT_ACCESS_EXPIRES_IN as any });
-    const refreshToken = this.jwtService.sign({ userId: user.id, username: user.username, role: user.role  }, { secret: process.env.JWT_REFRESH_SECRET, expiresIn: process.env.JWT_REFRESH_EXPIRES_IN as any });
+    const accessToken = this.jwtService.sign(
+      { userId: user.id, username: user.username, role: user.role  },
+      this.getAccessTokenOptions(),
+    );
+    const refreshToken = this.jwtService.sign(
+      { userId: user.id, username: user.username, role: user.role  },
+      this.getRefreshTokenOptions(),
+    );
 
     await this.redisService.redis.set(
       `refreshToken:${user.id}`,
@@ -125,7 +147,9 @@ export class AuthService {
   // 刷新 token
   async refresh(refreshToken: string) {
     try {
-      const payload = this.jwtService.verify(refreshToken, { secret: process.env.JWT_REFRESH_SECRET });
+      const payload = this.jwtService.verify(refreshToken, {
+        secret: this.getRefreshTokenOptions().secret,
+      });
       // verify 返回的 payload 含 iat/exp，不能直接用于 sign，否则会报错
       const { iat, exp, ...userPayload } = payload as { iat?: number; exp?: number; userId: number; username: string; role: string };
 
@@ -135,7 +159,7 @@ export class AuthService {
         throw new BadGatewayException('refreshToken 无效');
       }
 
-      const accessToken = this.jwtService.sign(userPayload, { secret: process.env.JWT_ACCESS_SECRET, expiresIn: process.env.JWT_ACCESS_EXPIRES_IN as any });
+      const accessToken = this.jwtService.sign(userPayload, this.getAccessTokenOptions());
       return {
         accessToken: accessToken,
       };
