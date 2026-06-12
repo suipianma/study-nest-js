@@ -6,7 +6,13 @@ import {
 } from '@nestjs/common';
 import { Conversation, Message } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { MAX_MESSAGES } from './constants';
+import { MAX_MESSAGES, MESSAGE_PAGE_SIZE } from './constants';
+
+export interface MessagesPageResult {
+  items: Message[];
+  hasMore: boolean;
+  total: number;
+}
 
 @Injectable()
 export class ConversationService {
@@ -68,11 +74,62 @@ export class ConversationService {
     conversationId: number,
     userId: number,
   ): Promise<Message[]> {
-    await this.findOneOrFail(conversationId, userId);
-    return this.prisma.message.findMany({
-      where: { conversationId },
-      orderBy: { createdAt: 'asc' },
+    const page = await this.getMessagesPaginated(conversationId, userId, {
+      limit: MAX_MESSAGES,
     });
+    return page.items;
+  }
+
+  /**
+   * 分页获取消息
+   * - 无 beforeId：最新 limit 条（升序返回）
+   * - 有 beforeId：该 id 之前更早的 limit 条（升序返回）
+   */
+  async getMessagesPaginated(
+    conversationId: number,
+    userId: number,
+    options: { limit?: number; beforeId?: number } = {},
+  ): Promise<MessagesPageResult> {
+    await this.findOneOrFail(conversationId, userId);
+
+    const limit = Math.min(
+      Math.max(options.limit ?? MESSAGE_PAGE_SIZE, 1),
+      MAX_MESSAGES,
+    );
+    const total = await this.countMessages(conversationId);
+
+    if (options.beforeId) {
+      const older = await this.prisma.message.findMany({
+        where: { conversationId, id: { lt: options.beforeId } },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      });
+      const items = older.reverse();
+      const hasMore =
+        items.length > 0
+          ? (await this.prisma.message.count({
+              where: {
+                conversationId,
+                id: { lt: items[0].id },
+              },
+            })) > 0
+          : false;
+
+      return { items, hasMore, total };
+    }
+
+    const latest = await this.prisma.message.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+    const items = latest.reverse();
+
+    return {
+      items,
+      hasMore: total > items.length,
+      total,
+    };
   }
 
   countMessages(conversationId: number): Promise<number> {

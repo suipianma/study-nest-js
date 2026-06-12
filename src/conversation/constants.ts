@@ -3,6 +3,11 @@ export const MAX_MESSAGES = Number(
   process.env.CONVERSATION_MAX_MESSAGES ?? 200,
 );
 
+/** 消息分页默认每页条数 */
+export const MESSAGE_PAGE_SIZE = Number(
+  process.env.CONVERSATION_MESSAGE_PAGE_SIZE ?? 30,
+);
+
 /** 超过此数量启用摘要模式 */
 export const SUMMARY_TRIGGER = Number(
   process.env.CONVERSATION_SUMMARY_TRIGGER ?? 40,

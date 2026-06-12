@@ -88,12 +88,17 @@ export class ConversationController {
 
   @Get(':id/messages')
   @UseGuards(AuthGuard('jwt'))
-  @ApiOperation({ summary: '获取会话消息列表' })
+  @ApiOperation({ summary: '分页获取会话消息' })
   getMessages(
     @Param('id') id: string,
+    @Query('limit') limit: string | undefined,
+    @Query('beforeId') beforeId: string | undefined,
     @Req() req: Request & { user: JwtPayload },
   ) {
-    return this.conversationService.getMessages(+id, req.user.userId);
+    return this.conversationService.getMessagesPaginated(+id, req.user.userId, {
+      limit: limit ? +limit : undefined,
+      beforeId: beforeId ? +beforeId : undefined,
+    });
   }
 
   @Sse(':id/stream')
