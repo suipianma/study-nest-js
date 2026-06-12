@@ -3,6 +3,7 @@ import { Observable } from 'rxjs';
 import { AiCacheService } from './ai-cache.service';
 import { OllamaProvider } from './providers/ollama.provider';
 import { ChatReply } from './providers/ai.provider';
+import { ChatMessage } from './types/chat-message.type';
 
 interface StreamPayload {
   thinking: string;
@@ -18,23 +19,29 @@ export class AiService {
     private readonly cacheService: AiCacheService,
   ) {}
 
-  async chat(prompt: string): Promise<ChatReply> {
-    const cached = await this.cacheService.get(prompt);
+  async chat(
+    messages: ChatMessage[],
+    summary?: string | null,
+  ): Promise<ChatReply> {
+    const cached = await this.cacheService.get(messages, summary);
     if (cached) return cached;
 
-    const result = await this.provider.chat(prompt);
-    await this.cacheService.set(prompt, result);
+    const result = await this.provider.chat(messages);
+    await this.cacheService.set(messages, result, summary);
     return result;
   }
 
-  streamChat(prompt: string): Observable<MessageEvent> {
+  streamChat(
+    messages: ChatMessage[],
+    summary?: string | null,
+  ): Observable<MessageEvent> {
     return new Observable((subscriber) => {
       let subscription: { unsubscribe: () => void } | undefined;
       let thinking = '';
       let response = '';
 
       const startStream = async () => {
-        const cached = await this.cacheService.get(prompt);
+        const cached = await this.cacheService.get(messages, summary);
         if (cached) {
           subscriber.next({
             data: {
@@ -48,7 +55,7 @@ export class AiService {
           return;
         }
 
-        subscription = this.provider.streamChat(prompt).subscribe({
+        subscription = this.provider.streamChat(messages).subscribe({
           next: (event) => {
             const payload = this.parseStreamPayload(event.data);
             if (payload.thinking) thinking = payload.thinking;
@@ -57,7 +64,11 @@ export class AiService {
           },
           error: (err) => subscriber.error(err),
           complete: async () => {
-            await this.cacheService.set(prompt, { thinking, response });
+            await this.cacheService.set(
+              messages,
+              { thinking, response },
+              summary,
+            );
             subscriber.complete();
           },
         });

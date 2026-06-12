@@ -16,6 +16,7 @@ import { TimeoutMiddleware } from './common/middleware/timeout.middleware';
 import { UploadModule } from './upload/upload.module';
 import { ChatModule } from './chat/chat.module';
 import { AiModule } from './ai/ai.module';
+import { ConversationModule } from './conversation/conversation.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { AiModule } from './ai/ai.module';
     UploadModule,
     ChatModule,
     AiModule,
+    ConversationModule,
   ],
   controllers: [AppController],
   providers: [

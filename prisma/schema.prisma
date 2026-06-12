@@ -14,3 +14,29 @@ model User {
   role      String   @default("user")
   createdAt DateTime @default(now())
 }
+
+model Conversation {
+  id                   Int       @id @default(autoincrement())
+  userId               Int
+  title                String    @db.VarChar(100)
+  summary              String?   @db.Text
+  summarizedMessageId  Int?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  messages             Message[]
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  role           String       @db.VarChar(20)
+  content        String       @db.Text
+  thinking       String?      @db.Text
+  fromCache      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}

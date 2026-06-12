@@ -1,4 +1,5 @@
 import { Observable } from 'rxjs';
+import { ChatMessage } from '../types/chat-message.type';
 
 export interface ChatReply {
   thinking: string;
@@ -6,6 +7,6 @@ export interface ChatReply {
 }
 
 export interface AIProvider {
-  chat(prompt: string): Promise<ChatReply>;
-  streamChat(prompt: string): Observable<MessageEvent>;
+  chat(messages: ChatMessage[]): Promise<ChatReply>;
+  streamChat(messages: ChatMessage[]): Observable<MessageEvent>;
 }

@@ -9,12 +9,27 @@ import {
   OLLAMA_CHAT_TIMEOUT_MS,
   OLLAMA_STREAM_TIMEOUT_MS,
 } from '../../common/constants/api.constant';
+import { ChatMessage } from '../types/chat-message.type';
 import { AIProvider, ChatReply } from './ai.provider';
 
-interface OllamaGenerateResponse {
+interface OllamaChatChunk {
+  message?: {
+    role?: string;
+    content?: string;
+    thinking?: string;
+  };
+  /** /api/generate 兼容字段 */
   thinking?: string;
   response?: string;
   done?: boolean;
+}
+
+/** 从 Ollama /api/chat 单块响应中提取增量内容 */
+function extractChunkDelta(chunk: OllamaChatChunk) {
+  return {
+    contentDelta: chunk.message?.content ?? chunk.response ?? '',
+    thinkingDelta: chunk.message?.thinking ?? chunk.thinking ?? '',
+  };
 }
 
 @Injectable()
@@ -29,17 +44,17 @@ export class OllamaProvider implements AIProvider {
     };
   }
 
-  async chat(prompt: string): Promise<ChatReply> {
+  async chat(messages: ChatMessage[]): Promise<ChatReply> {
     const { baseUrl, model } = this.getOllamaConfig();
 
     let res: Response;
     try {
-      res = await fetch(`${baseUrl}/api/generate`, {
+      res = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model,
-          prompt,
+          messages,
           stream: false,
         }),
         signal: AbortSignal.timeout(OLLAMA_CHAT_TIMEOUT_MS),
@@ -60,15 +75,14 @@ export class OllamaProvider implements AIProvider {
       );
     }
 
-    const data = (await res.json()) as OllamaGenerateResponse;
+    const data = (await res.json()) as OllamaChatChunk;
+    const thinking = (data.message?.thinking ?? data.thinking ?? '').trim();
+    const response = (data.message?.content ?? data.response ?? '').trim();
 
-    return {
-      thinking: data.thinking?.trim() ?? '',
-      response: data.response?.trim() ?? '',
-    };
+    return { thinking, response };
   }
 
-  streamChat(prompt: string): Observable<MessageEvent> {
+  streamChat(messages: ChatMessage[]): Observable<MessageEvent> {
     const { baseUrl, model } = this.getOllamaConfig();
 
     return new Observable((subscriber) => {
@@ -82,12 +96,12 @@ export class OllamaProvider implements AIProvider {
         abortController.abort();
       }, OLLAMA_STREAM_TIMEOUT_MS);
 
-      fetch(`${baseUrl}/api/generate`, {
+      fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model,
-          prompt,
+          messages,
           stream: true,
         }),
         signal: abortController.signal,
@@ -124,9 +138,10 @@ export class OllamaProvider implements AIProvider {
               if (!trimmed) continue;
 
               try {
-                const json = JSON.parse(trimmed) as OllamaGenerateResponse;
-                if (json.thinking) thinking += json.thinking;
-                if (json.response) response += json.response;
+                const json = JSON.parse(trimmed) as OllamaChatChunk;
+                const { contentDelta, thinkingDelta } = extractChunkDelta(json);
+                if (thinkingDelta) thinking += thinkingDelta;
+                if (contentDelta) response += contentDelta;
 
                 subscriber.next({
                   data: {
