@@ -36,6 +36,8 @@ interface StreamPayload {
   response?: string;
   done?: boolean;
   fromCache?: boolean;
+  promptTokens?: number;
+  completionTokens?: number;
 }
 
 @Controller('conversations')
@@ -62,6 +64,13 @@ export class ConversationController {
   @ApiOperation({ summary: '新建会话' })
   create(@Req() req: Request & { user: JwtPayload }) {
     return this.conversationService.create(req.user.userId);
+  }
+
+  @Get('stats/token-usage')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({ summary: '获取当前用户 token 消耗统计' })
+  getTokenUsage(@Req() req: Request & { user: JwtPayload }) {
+    return this.conversationService.getTokenUsageStats(req.user.userId);
   }
 
   @Patch(':id')
@@ -184,6 +193,8 @@ export class ConversationController {
     let thinking = '';
     let response = '';
     let fromCache = false;
+    let promptTokens: number | undefined;
+    let completionTokens: number | undefined;
     let finishedNormally = false;
 
     return this.aiService
@@ -194,6 +205,10 @@ export class ConversationController {
           if (payload.thinking) thinking = payload.thinking;
           if (payload.response) response = payload.response;
           if (payload.fromCache) fromCache = true;
+          if (payload.promptTokens != null) promptTokens = payload.promptTokens;
+          if (payload.completionTokens != null) {
+            completionTokens = payload.completionTokens;
+          }
         }),
         tap({
           complete: () => {
@@ -214,6 +229,8 @@ export class ConversationController {
             finalContent,
             thinking,
             fromCache,
+            promptTokens,
+            completionTokens,
             isFirstAiReply,
           });
         }),
@@ -227,6 +244,8 @@ export class ConversationController {
     finalContent: string;
     thinking: string;
     fromCache: boolean;
+    promptTokens?: number;
+    completionTokens?: number;
     isFirstAiReply: boolean;
   }): Promise<void> {
     const {
@@ -235,6 +254,8 @@ export class ConversationController {
       finalContent,
       thinking,
       fromCache,
+      promptTokens,
+      completionTokens,
       isFirstAiReply,
     } = options;
 
@@ -243,6 +264,8 @@ export class ConversationController {
         content: finalContent,
         thinking: thinking || undefined,
         fromCache,
+        promptTokens: fromCache ? 0 : promptTokens,
+        completionTokens: fromCache ? 0 : completionTokens,
       });
       await this.conversationService.touchUpdatedAt(conversationId);
 

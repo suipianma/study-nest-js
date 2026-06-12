@@ -7,11 +7,28 @@ import {
 import { Conversation, Message } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MAX_MESSAGES, MESSAGE_PAGE_SIZE } from './constants';
+import {
+  buildDailyTokenTrend,
+  resolveMessageTokens,
+  type TokenDailyPoint,
+} from './utils/token.util';
 
 export interface MessagesPageResult {
   items: Message[];
   hasMore: boolean;
   total: number;
+}
+
+export interface TokenUsageStats {
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  todayTokens: number;
+  aiReplyCount: number;
+  cachedReplyCount: number;
+  conversationCount: number;
+  hasEstimated: boolean;
+  dailyTrend: TokenDailyPoint[];
 }
 
 @Injectable()
@@ -147,7 +164,13 @@ export class ConversationService {
 
   createAssistantMessage(
     conversationId: number,
-    data: { content: string; thinking?: string; fromCache?: boolean },
+    data: {
+      content: string;
+      thinking?: string;
+      fromCache?: boolean;
+      promptTokens?: number;
+      completionTokens?: number;
+    },
   ): Promise<Message> {
     return this.prisma.message.create({
       data: {
@@ -156,8 +179,82 @@ export class ConversationService {
         content: data.content,
         thinking: data.thinking,
         fromCache: data.fromCache ?? false,
+        promptTokens: data.promptTokens,
+        completionTokens: data.completionTokens,
       },
     });
+  }
+
+  /** 聚合当前用户 AI 对话 token 消耗 */
+  async getTokenUsageStats(userId: number): Promise<TokenUsageStats> {
+    const conversations = await this.prisma.conversation.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+    const conversationIds = conversations.map((c) => c.id);
+
+    if (conversationIds.length === 0) {
+      return {
+        totalTokens: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        todayTokens: 0,
+        aiReplyCount: 0,
+        cachedReplyCount: 0,
+        conversationCount: 0,
+        hasEstimated: false,
+        dailyTrend: buildDailyTokenTrend([]),
+      };
+    }
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const assistantMessages = await this.prisma.message.findMany({
+      where: {
+        conversationId: { in: conversationIds },
+        role: 'assistant',
+      },
+      select: {
+        role: true,
+        promptTokens: true,
+        completionTokens: true,
+        content: true,
+        thinking: true,
+        fromCache: true,
+        createdAt: true,
+      },
+    });
+
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let todayTokens = 0;
+    let cachedReplyCount = 0;
+    let hasEstimated = false;
+
+    for (const message of assistantMessages) {
+      const resolved = resolveMessageTokens(message);
+      promptTokens += resolved.prompt;
+      completionTokens += resolved.completion;
+      if (resolved.estimated) hasEstimated = true;
+      if (message.fromCache) cachedReplyCount += 1;
+
+      if (message.createdAt >= startOfToday) {
+        todayTokens += resolved.prompt + resolved.completion;
+      }
+    }
+
+    return {
+      totalTokens: promptTokens + completionTokens,
+      promptTokens,
+      completionTokens,
+      todayTokens,
+      aiReplyCount: assistantMessages.length,
+      cachedReplyCount,
+      conversationCount: conversationIds.length,
+      hasEstimated,
+      dailyTrend: buildDailyTokenTrend(assistantMessages),
+    };
   }
 
   /** 消息数达上限时拒绝发送 */

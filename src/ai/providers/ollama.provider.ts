@@ -22,6 +22,9 @@ interface OllamaChatChunk {
   thinking?: string;
   response?: string;
   done?: boolean;
+  /** Ollama 返回的 token 统计 */
+  prompt_eval_count?: number;
+  eval_count?: number;
 }
 
 /** 从 Ollama /api/chat 单块响应中提取增量内容 */
@@ -148,6 +151,8 @@ export class OllamaProvider implements AIProvider {
                     thinking: thinking.trim(),
                     response: response.trim(),
                     done: !!json.done,
+                    promptTokens: json.prompt_eval_count,
+                    completionTokens: json.eval_count,
                   },
                 } as MessageEvent);
 
