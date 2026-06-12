@@ -5,36 +5,31 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ResponseInterceptor } from './common/interceptors/response.interceptors';
-import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ConfigService } from '@nestjs/config';
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const configService = app.get(ConfigService);
 
   app.enableCors({
-    origin: "http://localhost:3001",
+    origin: 'http://localhost:3001',
     credentials: true,
   });
 
-  // 静态资源：上传文件可通过 /uploads/xxx 直接访问
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads',
   });
 
-  // 全局管道 验证请求参数
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,  //自动过滤没定义的字段
-    forbidNonWhitelisted: true,  //如果定义了没定义的字段，则抛出异常
-    transform: true,  //自动转换类型
-  }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
 
-  // 全局拦截器 统一响应格式
   app.useGlobalInterceptors(new ResponseInterceptor());
 
-  // 全局异常过滤器 统一异常处理
-  app.useGlobalFilters(new HttpExceptionFilter());
-
-  // 设置swagger文档 方便前端开发人员查看接口文档(自动生成接口文档)
   const config = new DocumentBuilder()
     .setTitle('AI Admin API')
     .setDescription('AI 后台管理系统接口文档')

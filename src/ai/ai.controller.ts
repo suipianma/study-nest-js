@@ -1,27 +1,31 @@
-import { Controller, Sse } from '@nestjs/common';
-import { interval, map, Observable } from 'rxjs';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Post,
+  Query,
+  Sse,
+} from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { AiService } from './ai.service';
+import { ChatDto } from './dto/chat.dto';
+import { ChatReply } from './providers/ai.provider';
 
 @Controller('ai')
 export class AiController {
+  constructor(private readonly aiService: AiService) {}
+
+  // Nest SSE 模式：GET /ai/stream?prompt=xxx
   @Sse('stream')
-  stream() {
-    return interval(1000).pipe(map(() => ({ data: 'Hello world!' })));
+  stream(@Query('prompt') prompt?: string): Observable<MessageEvent> {
+    if (!prompt?.trim()) {
+      throw new BadRequestException('prompt 不能为空');
+    }
+    return this.aiService.streamChat(prompt.trim());
   }
 
-  @Sse('chat')
-  chat(): Observable<{ data: string }> {
-    return new Observable((observer) => {
-      const text = '你好，我是 AI 助手';
-      let index = 0;
-      const timer = setInterval(() => {
-        if(index < text.length) {
-          observer.next({ data: text[index] });
-          index++;
-        } else {
-          clearInterval(timer);
-          observer.complete();
-        }
-      }, 200);
-    });
+  @Post('chat')
+  async chat(@Body() body: ChatDto): Promise<ChatReply> {
+    return await this.aiService.chat(body.prompt);
   }
 }
