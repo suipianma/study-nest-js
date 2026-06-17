@@ -27,6 +27,7 @@ import {
   tap,
 } from 'rxjs';
 import { AiService } from '../ai/ai.service';
+import { PromptTemplateService } from '../ai/prompt-template.service';
 import { ConversationService } from './conversation.service';
 import { ContextBuilderService } from './context-builder.service';
 import { SummaryService } from './summary.service';
@@ -60,6 +61,7 @@ export class ConversationController {
     private readonly summaryService: SummaryService,
     private readonly titleService: TitleService,
     private readonly aiService: AiService,
+    private readonly promptTemplateService: PromptTemplateService,
   ) {}
 
   @Get()
@@ -126,6 +128,7 @@ export class ConversationController {
   stream(
     @Param('id') id: string,
     @Query('content') content: string,
+    @Query('promptId') promptId: string | undefined,
     @Req() req: Request & { user: JwtPayload },
   ): Observable<MessageEvent> {
     if (!content?.trim()) {
@@ -137,7 +140,9 @@ export class ConversationController {
     const trimmedContent = content.trim();
 
     return defer(() =>
-      from(this.prepareStream(conversationId, userId, trimmedContent)),
+      from(
+        this.prepareStream(conversationId, userId, trimmedContent, promptId),
+      ),
     ).pipe(switchMap((obs) => obs));
   }
 
@@ -146,6 +151,7 @@ export class ConversationController {
     conversationId: number,
     userId: number,
     content: string,
+    promptId?: string,
   ): Promise<Observable<MessageEvent>> {
     await this.conversationService.findOneOrFail(conversationId, userId);
     await this.conversationService.assertMessageLimit(conversationId);
@@ -161,13 +167,35 @@ export class ConversationController {
       (m) => m.role === 'user',
     ).length;
 
-    await this.conversationService.createUserMessage(conversationId, content);
+    let messageContent = content;
+    const trimmedPromptId = promptId?.trim();
+    const usePrompt = Boolean(trimmedPromptId);
+
+    if (usePrompt) {
+      const template = this.promptTemplateService.findById(trimmedPromptId!);
+      if (!template) throw new BadRequestException('模板不存在');
+      // 仅首条消息格式化存库，便于展示 Context
+      if (userCountBefore === 0) {
+        await this.conversationService.bindPromptTemplate(
+          conversationId,
+          template.id,
+        );
+        messageContent = this.promptTemplateService.formatUserMessage(
+          template,
+          content,
+        );
+      }
+    }
+    await this.conversationService.createUserMessage(
+      conversationId,
+      messageContent,
+    );
 
     // 首条用户消息 → 截断更新标题
     if (userCountBefore === 0) {
       await this.conversationService.updateTitleDirect(
         conversationId,
-        this.titleService.truncateTitle(content),
+        this.titleService.truncateTitle(messageContent),
       );
     }
 
@@ -197,7 +225,10 @@ export class ConversationController {
       );
     }
 
-    const ollamaMessages = this.contextBuilder.build(conversation, messages);
+    const ollamaMessages = this.contextBuilder.build(conversation, messages, {
+      injectPrompt: usePrompt,
+      promptId: trimmedPromptId,
+    });
     const isFirstAiReply = assistantCountBefore === 0;
 
     let thinking = '';
@@ -240,7 +271,7 @@ export class ConversationController {
           // 异步持久化，不阻塞 SSE 关闭
           void this.persistAssistantReply({
             conversationId,
-            content,
+            messageContent,
             finalContent,
             thinking,
             fromCache,
@@ -255,7 +286,7 @@ export class ConversationController {
   /** 流结束后写入 assistant 消息并触发后续异步任务 */
   private async persistAssistantReply(options: {
     conversationId: number;
-    content: string;
+    messageContent: string;
     finalContent: string;
     thinking: string;
     fromCache: boolean;
@@ -265,7 +296,7 @@ export class ConversationController {
   }): Promise<void> {
     const {
       conversationId,
-      content,
+      messageContent,
       finalContent,
       thinking,
       fromCache,
@@ -289,7 +320,7 @@ export class ConversationController {
         setImmediate(() => {
           void this.titleService.refineTitle(
             conversationId,
-            content,
+            messageContent,
             finalContent,
           );
         });

@@ -21,6 +21,7 @@ model Conversation {
   title                String    @db.VarChar(100)
   summary              String?   @db.Text
   summarizedMessageId  Int?
+  promptTemplateId     String?   @db.VarChar(50)
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
   messages             Message[]

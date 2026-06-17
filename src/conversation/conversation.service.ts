@@ -153,6 +153,17 @@ export class ConversationService {
     return this.prisma.message.count({ where: { conversationId } });
   }
 
+  /** 首条消息绑定 Prompt 模板 */
+  async bindPromptTemplate(
+    conversationId: number,
+    promptTemplateId: string,
+  ): Promise<void> {
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { promptTemplateId },
+    });
+  }
+
   createUserMessage(
     conversationId: number,
     content: string,
