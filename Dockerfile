@@ -1,6 +1,7 @@
-FROM node:20-bookworm-slim
+# pnpm 11+ 依赖 node:sqlite，需 Node 22+
+FROM node:22-bookworm-slim
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app
 
