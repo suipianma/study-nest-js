@@ -1,0 +1,43 @@
+# 服务器 / 本机 Docker 部署（只拉镜像，不在此 build）
+# 详见仓库根目录 SETUP.md、本目录 README.md
+
+services:
+  api:
+    image: ${BACKEND_IMAGE:-suipianma/study-nest-js:latest}
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3000}:3000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - mysql
+      - redis
+
+  web:
+    image: ${FRONTEND_IMAGE:-suipianma/admin-web:latest}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3001}:3001"
+    depends_on:
+      - api
+
+  mysql:
+    image: mysql:8
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_admin}
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mysql_data:
+  redis_data:

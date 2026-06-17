@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpException,
   Param,
   Patch,
   Post,
@@ -15,7 +16,16 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
-import { Observable, defer, finalize, from, switchMap, tap } from 'rxjs';
+import {
+  Observable,
+  catchError,
+  defer,
+  finalize,
+  from,
+  of,
+  switchMap,
+  tap,
+} from 'rxjs';
 import { AiService } from '../ai/ai.service';
 import { ConversationService } from './conversation.service';
 import { ContextBuilderService } from './context-builder.service';
@@ -209,11 +219,16 @@ export class ConversationController {
           if (payload.completionTokens != null) {
             completionTokens = payload.completionTokens;
           }
+          if (payload.done) finishedNormally = true;
         }),
-        tap({
-          complete: () => {
-            finishedNormally = true;
-          },
+        catchError((err: unknown) => {
+          const message = this.extractStreamErrorMessage(err);
+          return of({
+            data: {
+              error: message,
+              done: true,
+            },
+          } as MessageEvent);
         }),
         finalize(() => {
           const finalContent = finishedNormally
@@ -285,6 +300,24 @@ export class ConversationController {
     } catch {
       // 持久化失败不影响已结束的 SSE 流
     }
+  }
+
+  /** 将流式异常转为 SSE error 事件，避免前端只看到「连接中断」 */
+  private extractStreamErrorMessage(err: unknown): string {
+    if (err instanceof HttpException) {
+      const body = err.getResponse();
+      if (typeof body === 'string') return body;
+      if (body && typeof body === 'object' && 'message' in body) {
+        const message = (body as { message?: string | string[] }).message;
+        if (Array.isArray(message)) return message.join('，');
+        if (typeof message === 'string' && message.trim()) return message;
+      }
+      return err.message;
+    }
+    if (err instanceof Error && err.message.trim()) {
+      return err.message;
+    }
+    return 'AI 服务异常，请稍后重试';
   }
 
   private parseStreamPayload(data: unknown): StreamPayload {

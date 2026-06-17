@@ -128,6 +128,8 @@ export class OllamaProvider implements AIProvider {
 
           const decoder = new TextDecoder();
 
+          let streamDone = false;
+
           while (!aborted) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -145,6 +147,8 @@ export class OllamaProvider implements AIProvider {
                 const { contentDelta, thinkingDelta } = extractChunkDelta(json);
                 if (thinkingDelta) thinking += thinkingDelta;
                 if (contentDelta) response += contentDelta;
+
+                if (json.done) streamDone = true;
 
                 subscriber.next({
                   data: {
@@ -164,6 +168,17 @@ export class OllamaProvider implements AIProvider {
                 // 跳过无法解析的行
               }
             }
+          }
+
+          // Ollama 偶发不返回 done 标记，补发终态避免前端误判连接中断
+          if (!streamDone && !aborted) {
+            subscriber.next({
+              data: {
+                thinking: thinking.trim(),
+                response: response.trim(),
+                done: true,
+              },
+            } as MessageEvent);
           }
 
           subscriber.complete();

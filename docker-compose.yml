@@ -1,34 +1,43 @@
-version: '3.8'
+# 用法见 环境.md
+# - 本地开发：docker compose up -d mysql redis
+# - Docker 全栈：docker compose --profile full up -d --build
 
 services:
   app:
+    profiles: ["full"]
     build: .
-
     ports:
-      - '3000:3000'
-
+      - "3000:3000"
     env_file:
       - .env.docker
-
     environment:
       NODE_ENV: production
-
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - mysql
       - redis
+    restart: unless-stopped
 
   mysql:
     image: mysql:8
-
-    restart: always
-
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: qwer1234
-
       MYSQL_DATABASE: ai_admin
+    volumes:
+      - mysql_data:/var/lib/mysql
 
   redis:
     image: redis:7
-
+    restart: unless-stopped
     ports:
-      - '6379:6379'
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mysql_data:
+  redis_data:
