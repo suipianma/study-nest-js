@@ -72,12 +72,21 @@ export class ContextBuilderService {
   }
 
   private toChatMessage(m: Message): ChatMessage {
+    let content = m.content;
+
+    // 发给模型时去掉【模板名】前缀，避免小模型复读展示文案
+    if (m.role === 'user' && /^【[^】]+】/.test(content)) {
+      const parsed = this.promptTemplateService.parseContextFromUserMessage(content);
+      if (parsed) content = parsed;
+    }
+
+    if (m.role === 'assistant' && m.thinking) {
+      content = `${m.thinking}\n${m.content}`;
+    }
+
     return {
       role: m.role as 'user' | 'assistant',
-      content:
-        m.role === 'assistant' && m.thinking
-          ? `${m.thinking}\n${m.content}`
-          : m.content,
+      content,
     };
   }
 }

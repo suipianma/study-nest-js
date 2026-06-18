@@ -10,6 +10,8 @@ interface StreamPayload {
   response: string;
   done?: boolean;
   fromCache?: boolean;
+  thinkingDelta?: string;
+  contentDelta?: string;
 }
 
 @Injectable()
@@ -58,17 +60,23 @@ export class AiService {
         subscription = this.provider.streamChat(messages).subscribe({
           next: (event) => {
             const payload = this.parseStreamPayload(event.data);
-            if (payload.thinking) thinking = payload.thinking;
-            if (payload.response) response = payload.response;
+            if (payload.thinkingDelta) thinking += payload.thinkingDelta;
+            if (payload.contentDelta) response += payload.contentDelta;
+            if (payload.thinking !== undefined) thinking = payload.thinking;
+            if (payload.response !== undefined) response = payload.response;
             subscriber.next(event);
           },
           error: (err) => subscriber.error(err),
           complete: async () => {
-            await this.cacheService.set(
-              messages,
-              { thinking, response },
-              summary,
-            );
+            try {
+              await this.cacheService.set(
+                messages,
+                { thinking, response },
+                summary,
+              );
+            } catch {
+              // 缓存失败不影响流式完成
+            }
             subscriber.complete();
           },
         });

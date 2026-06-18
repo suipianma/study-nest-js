@@ -14,6 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { SkipThrottle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import {
@@ -28,6 +29,7 @@ import {
 } from 'rxjs';
 import { AiService } from '../ai/ai.service';
 import { PromptTemplateService } from '../ai/prompt-template.service';
+import { resolveModelReply } from '../ai/utils/reply.util';
 import { ConversationService } from './conversation.service';
 import { ContextBuilderService } from './context-builder.service';
 import { SummaryService } from './summary.service';
@@ -45,6 +47,8 @@ interface JwtPayload {
 interface StreamPayload {
   thinking?: string;
   response?: string;
+  thinkingDelta?: string;
+  contentDelta?: string;
   done?: boolean;
   fromCache?: boolean;
   promptTokens?: number;
@@ -123,6 +127,7 @@ export class ConversationController {
   }
 
   @Sse(':id/stream')
+  @SkipThrottle()
   @UseGuards(JwtQueryGuard, AuthGuard('jwt'))
   @ApiOperation({ summary: '流式发送消息并获取 AI 回复' })
   stream(
@@ -243,8 +248,10 @@ export class ConversationController {
       .pipe(
         tap((event) => {
           const payload = this.parseStreamPayload(event.data);
-          if (payload.thinking) thinking = payload.thinking;
-          if (payload.response) response = payload.response;
+          if (payload.thinkingDelta) thinking += payload.thinkingDelta;
+          if (payload.contentDelta) response += payload.contentDelta;
+          if (payload.thinking !== undefined) thinking = payload.thinking;
+          if (payload.response !== undefined) response = payload.response;
           if (payload.fromCache) fromCache = true;
           if (payload.promptTokens != null) promptTokens = payload.promptTokens;
           if (payload.completionTokens != null) {
@@ -262,10 +269,11 @@ export class ConversationController {
           } as MessageEvent);
         }),
         finalize(() => {
+          const resolved = resolveModelReply(thinking, response);
           const finalContent = finishedNormally
-            ? response
-            : response
-              ? `${response}[回复中断]`
+            ? resolved.response
+            : resolved.response
+              ? `${resolved.response}[回复中断]`
               : '[回复中断]';
 
           // 异步持久化，不阻塞 SSE 关闭
@@ -273,7 +281,7 @@ export class ConversationController {
             conversationId,
             messageContent,
             finalContent,
-            thinking,
+            thinking: resolved.thinking,
             fromCache,
             promptTokens,
             completionTokens,

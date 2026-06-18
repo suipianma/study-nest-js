@@ -9,6 +9,7 @@ import {
   OLLAMA_CHAT_TIMEOUT_MS,
   OLLAMA_STREAM_TIMEOUT_MS,
 } from '../../common/constants/api.constant';
+import { resolveModelReply } from '../utils/reply.util';
 import { ChatMessage } from '../types/chat-message.type';
 import { AIProvider, ChatReply } from './ai.provider';
 
@@ -44,22 +45,38 @@ export class OllamaProvider implements AIProvider {
       baseUrl:
         this.config.get<string>('OLLAMA_URL') ?? 'http://localhost:11434',
       model: this.config.get<string>('OLLAMA_MODEL') ?? 'qwen3:8b',
+      think: this.parseThinkOption(),
+    };
+  }
+
+  /** OLLAMA_THINK=false 可关闭推理模型的思考链，让小模型直接输出正文 */
+  private parseThinkOption(): boolean | undefined {
+    const raw = this.config.get<string>('OLLAMA_THINK');
+    if (raw == null || raw === '') return undefined;
+    if (raw === 'false' || raw === '0') return false;
+    if (raw === 'true' || raw === '1') return true;
+    return undefined;
+  }
+
+  private buildChatBody(messages: ChatMessage[], stream: boolean) {
+    const { model, think } = this.getOllamaConfig();
+    return {
+      model,
+      messages,
+      stream,
+      ...(think !== undefined ? { think } : {}),
     };
   }
 
   async chat(messages: ChatMessage[]): Promise<ChatReply> {
-    const { baseUrl, model } = this.getOllamaConfig();
+    const { baseUrl } = this.getOllamaConfig();
 
     let res: Response;
     try {
       res = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: false,
-        }),
+        body: JSON.stringify(this.buildChatBody(messages, false)),
         signal: AbortSignal.timeout(OLLAMA_CHAT_TIMEOUT_MS),
       });
     } catch (error) {
@@ -79,14 +96,13 @@ export class OllamaProvider implements AIProvider {
     }
 
     const data = (await res.json()) as OllamaChatChunk;
-    const thinking = (data.message?.thinking ?? data.thinking ?? '').trim();
-    const response = (data.message?.content ?? data.response ?? '').trim();
-
-    return { thinking, response };
+    const rawThinking = (data.message?.thinking ?? data.thinking ?? '').trim();
+    const rawResponse = (data.message?.content ?? data.response ?? '').trim();
+    return resolveModelReply(rawThinking, rawResponse);
   }
 
   streamChat(messages: ChatMessage[]): Observable<MessageEvent> {
-    const { baseUrl, model } = this.getOllamaConfig();
+    const { baseUrl } = this.getOllamaConfig();
 
     return new Observable((subscriber) => {
       let thinking = '';
@@ -102,11 +118,7 @@ export class OllamaProvider implements AIProvider {
       fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: true,
-        }),
+        body: JSON.stringify(this.buildChatBody(messages, true)),
         signal: abortController.signal,
       })
         .then(async (res) => {
@@ -150,15 +162,28 @@ export class OllamaProvider implements AIProvider {
 
                 if (json.done) streamDone = true;
 
-                subscriber.next({
-                  data: {
-                    thinking: thinking.trim(),
-                    response: response.trim(),
-                    done: !!json.done,
-                    promptTokens: json.prompt_eval_count,
-                    completionTokens: json.eval_count,
-                  },
-                } as MessageEvent);
+                const hasDelta = Boolean(thinkingDelta || contentDelta);
+                if (hasDelta || json.done) {
+                  const resolved = json.done
+                    ? resolveModelReply(thinking, response)
+                    : null;
+
+                  subscriber.next({
+                    data: {
+                      thinkingDelta,
+                      contentDelta,
+                      done: !!json.done,
+                      ...(json.done
+                        ? {
+                            thinking: resolved!.thinking,
+                            response: resolved!.response,
+                            promptTokens: json.prompt_eval_count,
+                            completionTokens: json.eval_count,
+                          }
+                        : {}),
+                    },
+                  } as MessageEvent);
+                }
 
                 if (json.done) {
                   subscriber.complete();
@@ -172,11 +197,14 @@ export class OllamaProvider implements AIProvider {
 
           // Ollama 偶发不返回 done 标记，补发终态避免前端误判连接中断
           if (!streamDone && !aborted) {
+            const resolved = resolveModelReply(thinking, response);
             subscriber.next({
               data: {
-                thinking: thinking.trim(),
-                response: response.trim(),
+                thinkingDelta: '',
+                contentDelta: '',
                 done: true,
+                thinking: resolved.thinking,
+                response: resolved.response,
               },
             } as MessageEvent);
           }
@@ -186,6 +214,20 @@ export class OllamaProvider implements AIProvider {
         .catch((err) => {
           if (err instanceof Error && err.name === 'AbortError') {
             subscriber.error(new RequestTimeoutException('AI 流式生成超时'));
+            return;
+          }
+          if (thinking || response) {
+            const resolved = resolveModelReply(thinking, response);
+            subscriber.next({
+              data: {
+                thinkingDelta: '',
+                contentDelta: '',
+                done: true,
+                thinking: resolved.thinking,
+                response: resolved.response,
+              },
+            } as MessageEvent);
+            subscriber.complete();
             return;
           }
           subscriber.error(err);
