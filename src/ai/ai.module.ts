@@ -4,12 +4,25 @@ import { AiController } from './ai.controller';
 import { AiCacheService } from './ai-cache.service';
 import { OllamaProvider } from './providers/ollama.provider';
 import { PromptTemplateService } from './prompt-template.service';
+import { ToolCallParserService } from './tools/tool-call-parser.service';
+import { ToolOrchestratorService } from './tools/tool-orchestrator.service';
+import { ToolPromptService } from './tools/tool-prompt.service';
+import { ToolRegistryService } from './tools/tool-registry.service';
 import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [RedisModule],
-  providers: [AiService, AiCacheService, OllamaProvider, PromptTemplateService],
+  providers: [
+    AiService,
+    AiCacheService,
+    OllamaProvider,
+    PromptTemplateService,
+    ToolCallParserService,
+    ToolRegistryService,
+    ToolPromptService,
+    ToolOrchestratorService,
+  ],
   controllers: [AiController],
-  exports: [AiService, PromptTemplateService],
+  exports: [AiService, PromptTemplateService, ToolOrchestratorService],
 })
 export class AiModule {}

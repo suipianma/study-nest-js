@@ -14,6 +14,10 @@ interface StreamPayload {
   contentDelta?: string;
 }
 
+export interface AiCallOptions {
+  skipCache?: boolean;
+}
+
 @Injectable()
 export class AiService {
   constructor(
@@ -24,18 +28,24 @@ export class AiService {
   async chat(
     messages: ChatMessage[],
     summary?: string | null,
+    options?: AiCallOptions,
   ): Promise<ChatReply> {
-    const cached = await this.cacheService.get(messages, summary);
-    if (cached) return cached;
+    if (!options?.skipCache) {
+      const cached = await this.cacheService.get(messages, summary);
+      if (cached) return cached;
+    }
 
     const result = await this.provider.chat(messages);
-    await this.cacheService.set(messages, result, summary);
+    if (!options?.skipCache) {
+      await this.cacheService.set(messages, result, summary);
+    }
     return result;
   }
 
   streamChat(
     messages: ChatMessage[],
     summary?: string | null,
+    options?: AiCallOptions,
   ): Observable<MessageEvent> {
     return new Observable((subscriber) => {
       let subscription: { unsubscribe: () => void } | undefined;
@@ -43,18 +53,20 @@ export class AiService {
       let response = '';
 
       const startStream = async () => {
-        const cached = await this.cacheService.get(messages, summary);
-        if (cached) {
-          subscriber.next({
-            data: {
-              thinking: cached.thinking,
-              response: cached.response,
-              done: true,
-              fromCache: true,
-            },
-          } as MessageEvent);
-          subscriber.complete();
-          return;
+        if (!options?.skipCache) {
+          const cached = await this.cacheService.get(messages, summary);
+          if (cached) {
+            subscriber.next({
+              data: {
+                thinking: cached.thinking,
+                response: cached.response,
+                done: true,
+                fromCache: true,
+              },
+            } as MessageEvent);
+            subscriber.complete();
+            return;
+          }
         }
 
         subscription = this.provider.streamChat(messages).subscribe({
@@ -68,14 +80,16 @@ export class AiService {
           },
           error: (err) => subscriber.error(err),
           complete: async () => {
-            try {
-              await this.cacheService.set(
-                messages,
-                { thinking, response },
-                summary,
-              );
-            } catch {
-              // 缓存失败不影响流式完成
+            if (!options?.skipCache) {
+              try {
+                await this.cacheService.set(
+                  messages,
+                  { thinking, response },
+                  summary,
+                );
+              } catch {
+                // 缓存失败不影响流式完成
+              }
             }
             subscriber.complete();
           },

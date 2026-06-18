@@ -27,8 +27,8 @@ import {
   switchMap,
   tap,
 } from 'rxjs';
-import { AiService } from '../ai/ai.service';
 import { PromptTemplateService } from '../ai/prompt-template.service';
+import { ToolOrchestratorService } from '../ai/tools/tool-orchestrator.service';
 import { resolveModelReply } from '../ai/utils/reply.util';
 import { ConversationService } from './conversation.service';
 import { ContextBuilderService } from './context-builder.service';
@@ -53,6 +53,11 @@ interface StreamPayload {
   fromCache?: boolean;
   promptTokens?: number;
   completionTokens?: number;
+  phase?: 'tool_call' | 'tool_result';
+  tool?: string;
+  args?: Record<string, string>;
+  result?: string;
+  error?: string;
 }
 
 @Controller('conversations')
@@ -64,8 +69,8 @@ export class ConversationController {
     private readonly contextBuilder: ContextBuilderService,
     private readonly summaryService: SummaryService,
     private readonly titleService: TitleService,
-    private readonly aiService: AiService,
     private readonly promptTemplateService: PromptTemplateService,
+    private readonly toolOrchestrator: ToolOrchestratorService,
   ) {}
 
   @Get()
@@ -243,8 +248,8 @@ export class ConversationController {
     let completionTokens: number | undefined;
     let finishedNormally = false;
 
-    return this.aiService
-      .streamChat(ollamaMessages, conversation.summary)
+    return this.toolOrchestrator
+      .streamWithTools(ollamaMessages, conversation.summary)
       .pipe(
         tap((event) => {
           const payload = this.parseStreamPayload(event.data);
