@@ -120,6 +120,13 @@ export class ConversationController {
     );
   }
 
+  @Delete('all')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({ summary: '删除全部会话' })
+  removeAll(@Req() req: Request & { user: JwtPayload }) {
+    return this.conversationService.removeAllByUser(req.user.userId);
+  }
+
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'))
   @ApiOperation({ summary: '删除会话' })
@@ -151,6 +158,7 @@ export class ConversationController {
     @Query('content') content: string,
     @Query('promptId') promptId: string | undefined,
     @Query('knowledgeBaseIds') knowledgeBaseIds: string | undefined,
+    @Query('regenerate') regenerate: string | undefined,
     @Req() req: Request & { user: JwtPayload },
   ): Observable<MessageEvent> {
     if (!content?.trim()) {
@@ -161,6 +169,7 @@ export class ConversationController {
     const userId = req.user.userId;
     const trimmedContent = content.trim();
     const kbIds = this.parseKnowledgeBaseIds(knowledgeBaseIds);
+    const isRegenerate = regenerate === '1' || regenerate === 'true';
 
     return defer(() =>
       from(
@@ -171,6 +180,7 @@ export class ConversationController {
           trimmedContent,
           promptId,
           kbIds,
+          isRegenerate,
         ),
       ),
     ).pipe(switchMap((obs) => obs));
@@ -184,9 +194,54 @@ export class ConversationController {
     content: string,
     promptId?: string,
     knowledgeBaseIds: number[] = [],
+    isRegenerate = false,
   ): Promise<Observable<MessageEvent>> {
     await this.conversationService.findOneOrFail(conversationId, userId);
-    await this.conversationService.assertMessageLimit(conversationId);
+
+    let messagesBefore = await this.conversationService.getMessages(
+      conversationId,
+      userId,
+    );
+
+    let messageContent = content;
+    let ragQuery = content;
+
+    if (isRegenerate) {
+      const last = messagesBefore[messagesBefore.length - 1];
+      if (last?.role === 'assistant') {
+        await this.conversationService.deleteMessage(
+          conversationId,
+          userId,
+          last.id,
+        );
+        messagesBefore = messagesBefore.slice(0, -1);
+      } else if (!last || last.role !== 'user') {
+        throw new BadRequestException('当前无法重新生成');
+      }
+
+      const lastUser = messagesBefore[messagesBefore.length - 1];
+      if (!lastUser || lastUser.role !== 'user') {
+        throw new BadRequestException('找不到对应的用户消息');
+      }
+
+      const trimmedInput = content.trim();
+      messageContent =
+        trimmedInput && trimmedInput !== lastUser.content
+          ? trimmedInput
+          : lastUser.content;
+      ragQuery = messageContent;
+
+      if (messageContent !== lastUser.content) {
+        await this.conversationService.updateUserMessageContent(
+          conversationId,
+          userId,
+          lastUser.id,
+          messageContent,
+        );
+      }
+    } else {
+      await this.conversationService.assertMessageLimit(conversationId);
+    }
 
     let ragChunks: RagChunk[] = [];
     let ragEnabled = knowledgeBaseIds.length > 0;
@@ -195,7 +250,7 @@ export class ConversationController {
 
     if (ragEnabled) {
       try {
-        ragChunks = await this.retrievalService.search(content, knowledgeBaseIds, {
+        ragChunks = await this.retrievalService.search(ragQuery, knowledgeBaseIds, {
           userId,
           role,
         });
@@ -207,10 +262,6 @@ export class ConversationController {
       }
     }
 
-    const messagesBefore = await this.conversationService.getMessages(
-      conversationId,
-      userId,
-    );
     const assistantCountBefore = messagesBefore.filter(
       (m) => m.role === 'assistant',
     ).length;
@@ -218,32 +269,33 @@ export class ConversationController {
       (m) => m.role === 'user',
     ).length;
 
-    let messageContent = content;
     const trimmedPromptId = promptId?.trim();
     const usePrompt = Boolean(trimmedPromptId);
 
-    if (usePrompt) {
-      const template = this.promptTemplateService.findById(trimmedPromptId!);
-      if (!template) throw new BadRequestException('模板不存在');
-      // 仅首条消息格式化存库，便于展示 Context
-      if (userCountBefore === 0) {
-        await this.conversationService.bindPromptTemplate(
-          conversationId,
-          template.id,
-        );
-        messageContent = this.promptTemplateService.formatUserMessage(
-          template,
-          content,
-        );
+    if (!isRegenerate) {
+      if (usePrompt) {
+        const template = this.promptTemplateService.findById(trimmedPromptId!);
+        if (!template) throw new BadRequestException('模板不存在');
+        // 仅首条消息格式化存库，便于展示 Context
+        if (userCountBefore === 0) {
+          await this.conversationService.bindPromptTemplate(
+            conversationId,
+            template.id,
+          );
+          messageContent = this.promptTemplateService.formatUserMessage(
+            template,
+            content,
+          );
+        }
       }
+      await this.conversationService.createUserMessage(
+        conversationId,
+        messageContent,
+      );
     }
-    await this.conversationService.createUserMessage(
-      conversationId,
-      messageContent,
-    );
 
     // 首条用户消息 → 截断更新标题
-    if (userCountBefore === 0) {
+    if (!isRegenerate && userCountBefore === 0) {
       await this.conversationService.updateTitleDirect(
         conversationId,
         this.titleService.truncateTitle(messageContent),
