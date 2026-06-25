@@ -43,3 +43,46 @@ model Message {
 
   @@index([conversationId, createdAt])
 }
+
+model KnowledgeBase {
+  id          Int        @id @default(autoincrement())
+  userId      Int
+  name        String     @db.VarChar(100)
+  description String?    @db.VarChar(500)
+  visibility  String     @default("private") @db.VarChar(20)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  documents   Document[]
+
+  @@index([userId, updatedAt])
+  @@index([visibility])
+}
+
+model Document {
+  id              Int           @id @default(autoincrement())
+  knowledgeBaseId Int
+  filename        String        @db.VarChar(255)
+  mimeType        String        @db.VarChar(100)
+  filePath        String        @db.VarChar(500)
+  status          String        @default("pending") @db.VarChar(20)
+  errorMessage    String?       @db.Text
+  chunkCount      Int           @default(0)
+  createdAt       DateTime      @default(now())
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  chunks          Chunk[]
+
+  @@index([knowledgeBaseId, createdAt])
+}
+
+model Chunk {
+  id         Int      @id @default(autoincrement())
+  documentId Int
+  index      Int
+  content    String   @db.Text
+  page       Int?
+  tokenCount Int?
+  createdAt  DateTime @default(now())
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, index])
+}

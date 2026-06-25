@@ -20,6 +20,8 @@ CREATE TABLE `Message` (
     `content` TEXT NOT NULL,
     `thinking` TEXT NULL,
     `fromCache` BOOLEAN NOT NULL DEFAULT false,
+    `promptTokens` INTEGER NULL,
+    `completionTokens` INTEGER NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `Message_conversationId_createdAt_idx`(`conversationId`, `createdAt`),

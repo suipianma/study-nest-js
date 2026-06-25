@@ -14,6 +14,18 @@
 Git、Node 20+、pnpm、Docker Desktop、Ollama  
 `ollama pull deepseek-r1:1.5b`
 
+RAG 知识库还需：
+
+- **Qdrant** 向量库（随 `pnpm run docker:infra` 启动）：http://localhost:6333  
+- **Embedding 模型**（Ollama）：`ollama pull nomic-embed-text`
+
+`.env.dev` 中可配置（后续 RAG 模块会读取）：
+
+| 变量 | 说明 | 示例 |
+|------|------|------|
+| `QDRANT_URL` | Qdrant HTTP 地址 | `http://localhost:6333` |
+| `OLLAMA_EMBED_MODEL` | Ollama embedding 模型名 | `nomic-embed-text` |
+
 ---
 
 ## 2. 本地目录（兄弟文件夹）

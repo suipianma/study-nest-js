@@ -30,6 +30,8 @@ import {
 import { PromptTemplateService } from '../ai/prompt-template.service';
 import { ToolOrchestratorService } from '../ai/tools/tool-orchestrator.service';
 import { resolveModelReply } from '../ai/utils/reply.util';
+import { RetrievalService } from '../knowledge-base/retrieval.service';
+import { RagCitation, RagChunk } from '../knowledge-base/types/rag.type';
 import { ConversationService } from './conversation.service';
 import { ContextBuilderService } from './context-builder.service';
 import { SummaryService } from './summary.service';
@@ -53,7 +55,8 @@ interface StreamPayload {
   fromCache?: boolean;
   promptTokens?: number;
   completionTokens?: number;
-  phase?: 'tool_call' | 'tool_result';
+  phase?: 'tool_call' | 'tool_result' | 'rag_retrieval';
+  citations?: RagCitation[];
   tool?: string;
   args?: Record<string, string>;
   result?: string;
@@ -71,6 +74,7 @@ export class ConversationController {
     private readonly titleService: TitleService,
     private readonly promptTemplateService: PromptTemplateService,
     private readonly toolOrchestrator: ToolOrchestratorService,
+    private readonly retrievalService: RetrievalService,
   ) {}
 
   @Get()
@@ -139,6 +143,7 @@ export class ConversationController {
     @Param('id') id: string,
     @Query('content') content: string,
     @Query('promptId') promptId: string | undefined,
+    @Query('knowledgeBaseIds') knowledgeBaseIds: string | undefined,
     @Req() req: Request & { user: JwtPayload },
   ): Observable<MessageEvent> {
     if (!content?.trim()) {
@@ -148,10 +153,18 @@ export class ConversationController {
     const conversationId = +id;
     const userId = req.user.userId;
     const trimmedContent = content.trim();
+    const kbIds = this.parseKnowledgeBaseIds(knowledgeBaseIds);
 
     return defer(() =>
       from(
-        this.prepareStream(conversationId, userId, trimmedContent, promptId),
+        this.prepareStream(
+          conversationId,
+          userId,
+          req.user.role,
+          trimmedContent,
+          promptId,
+          kbIds,
+        ),
       ),
     ).pipe(switchMap((obs) => obs));
   }
@@ -160,11 +173,32 @@ export class ConversationController {
   private async prepareStream(
     conversationId: number,
     userId: number,
+    role: string,
     content: string,
     promptId?: string,
+    knowledgeBaseIds: number[] = [],
   ): Promise<Observable<MessageEvent>> {
     await this.conversationService.findOneOrFail(conversationId, userId);
     await this.conversationService.assertMessageLimit(conversationId);
+
+    let ragChunks: RagChunk[] = [];
+    let ragEnabled = knowledgeBaseIds.length > 0;
+    let ragUnavailable = false;
+    let citations: RagCitation[] = [];
+
+    if (ragEnabled) {
+      try {
+        ragChunks = await this.retrievalService.search(content, knowledgeBaseIds, {
+          userId,
+          role,
+        });
+        citations = this.retrievalService.toCitations(ragChunks);
+      } catch {
+        ragChunks = [];
+        citations = [];
+        ragUnavailable = true;
+      }
+    }
 
     const messagesBefore = await this.conversationService.getMessages(
       conversationId,
@@ -238,6 +272,9 @@ export class ConversationController {
     const ollamaMessages = this.contextBuilder.build(conversation, messages, {
       injectPrompt: usePrompt,
       promptId: trimmedPromptId,
+      ragChunks,
+      ragEnabled,
+      ragUnavailable,
     });
     const isFirstAiReply = assistantCountBefore === 0;
 
@@ -248,7 +285,7 @@ export class ConversationController {
     let completionTokens: number | undefined;
     let finishedNormally = false;
 
-    return this.toolOrchestrator
+    const aiStream = this.toolOrchestrator
       .streamWithTools(ollamaMessages, conversation.summary)
       .pipe(
         tap((event) => {
@@ -294,6 +331,25 @@ export class ConversationController {
           });
         }),
       );
+
+    return new Observable((subscriber) => {
+      if (ragEnabled) {
+        subscriber.next({
+          data: {
+            phase: 'rag_retrieval',
+            citations,
+          } satisfies StreamPayload,
+        } as MessageEvent);
+      }
+
+      const sub = aiStream.subscribe({
+        next: (event) => subscriber.next(event),
+        error: (error) => subscriber.error(error),
+        complete: () => subscriber.complete(),
+      });
+
+      return () => sub.unsubscribe();
+    });
   }
 
   /** 流结束后写入 assistant 消息并触发后续异步任务 */
@@ -378,5 +434,14 @@ export class ConversationController {
     }
 
     return {};
+  }
+
+  private parseKnowledgeBaseIds(value?: string): number[] {
+    if (!value?.trim()) return [];
+    const ids = value
+      .split(',')
+      .map((item) => Number(item.trim()))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    return [...new Set(ids)];
   }
 }

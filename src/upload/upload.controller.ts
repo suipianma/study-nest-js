@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { diskStorage } from 'multer';
+import { decodeMulterOriginalName } from '../common/utils/multer-filename.util';
 
 @Controller('upload')
 @ApiTags('上传模块')
@@ -24,8 +25,7 @@ export class UploadController {
     storage: diskStorage({
       destination: './uploads',
       filename: (req, file, cb) => {
-        // multer 默认按 latin1 解析 originalname，中文文件名需转回 utf8
-        const originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        const originalname = decodeMulterOriginalName(file.originalname);
         cb(null, `${Date.now()}-${originalname}`);
       },
     }),

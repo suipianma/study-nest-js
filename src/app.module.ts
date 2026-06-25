@@ -17,6 +17,7 @@ import { UploadModule } from './upload/upload.module';
 import { ChatModule } from './chat/chat.module';
 import { AiModule } from './ai/ai.module';
 import { ConversationModule } from './conversation/conversation.module';
+import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 
 @Module({
   imports: [
@@ -31,7 +32,8 @@ import { ConversationModule } from './conversation/conversation.module';
     ThrottlerModule.forRoot([
       {
         ttl: 60000,
-        limit: 10,
+        // 全局限流：开发/管理端页面一次加载会并发多个 API，10 次/分钟过严
+        limit: Number(process.env.THROTTLE_LIMIT ?? 120),
       },
     ]),
     LoggerModule,
@@ -39,6 +41,7 @@ import { ConversationModule } from './conversation/conversation.module';
     ChatModule,
     AiModule,
     ConversationModule,
+    KnowledgeBaseModule,
   ],
   controllers: [AppController],
   providers: [
