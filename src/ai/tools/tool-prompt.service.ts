@@ -24,6 +24,7 @@ export class ToolPromptService {
       '',
       '输出格式（仅 JSON，无代码块）：',
       '{"tool":"weather","city":"武汉"}',
+      '{"tool":"searchKnowledgeBase","query":"年假规定"}',
       '',
       '如果不需要调用工具，直接用自然语言回答用户，不要输出 JSON。',
     );

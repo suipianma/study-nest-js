@@ -28,7 +28,9 @@ import {
   tap,
 } from 'rxjs';
 import { PromptTemplateService } from '../ai/prompt-template.service';
-import { ToolOrchestratorService } from '../ai/tools/tool-orchestrator.service';
+import { AiService } from '../ai/ai.service';
+import { AgentOrchestratorService } from '../ai/agent/agent-orchestrator.service';
+import { AgentRouterService } from '../ai/agent/agent-router.service';
 import { resolveModelReply } from '../ai/utils/reply.util';
 import { RetrievalService } from '../knowledge-base/retrieval.service';
 import { RagCitation, RagChunk } from '../knowledge-base/types/rag.type';
@@ -55,7 +57,10 @@ interface StreamPayload {
   fromCache?: boolean;
   promptTokens?: number;
   completionTokens?: number;
-  phase?: 'tool_call' | 'tool_result' | 'rag_retrieval';
+  phase?: 'agent_start' | 'agent_step' | 'agent_done' | 'tool_call' | 'tool_result' | 'rag_retrieval';
+  step?: number;
+  maxSteps?: number;
+  steps?: number;
   citations?: RagCitation[];
   tool?: string;
   args?: Record<string, string>;
@@ -73,7 +78,9 @@ export class ConversationController {
     private readonly summaryService: SummaryService,
     private readonly titleService: TitleService,
     private readonly promptTemplateService: PromptTemplateService,
-    private readonly toolOrchestrator: ToolOrchestratorService,
+    private readonly aiService: AiService,
+    private readonly agentRouter: AgentRouterService,
+    private readonly agentOrchestrator: AgentOrchestratorService,
     private readonly retrievalService: RetrievalService,
   ) {}
 
@@ -285,9 +292,18 @@ export class ConversationController {
     let completionTokens: number | undefined;
     let finishedNormally = false;
 
-    const aiStream = this.toolOrchestrator
-      .streamWithTools(ollamaMessages, conversation.summary)
-      .pipe(
+    const routeMode = await this.agentRouter.route(content);
+
+    const aiStream =
+      routeMode === 'direct'
+        ? this.aiService.streamChat(ollamaMessages, conversation.summary)
+        : this.agentOrchestrator.streamWithAgent(
+            ollamaMessages,
+            conversation.summary,
+            { userId, role, knowledgeBaseIds },
+          );
+
+    const pipedStream = aiStream.pipe(
         tap((event) => {
           const payload = this.parseStreamPayload(event.data);
           if (payload.thinkingDelta) thinking += payload.thinkingDelta;
@@ -342,7 +358,7 @@ export class ConversationController {
         } as MessageEvent);
       }
 
-      const sub = aiStream.subscribe({
+      const sub = pipedStream.subscribe({
         next: (event) => subscriber.next(event),
         error: (error) => subscriber.error(error),
         complete: () => subscriber.complete(),

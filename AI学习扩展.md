@@ -167,6 +167,12 @@ AI直接操作：
 
 ## LangGraph
 
+### 第二阶段 Agent 进度
+
+- [x] Function Calling（多步 ReAct Agent）
+- [x] MCP（filesystem 示范）
+- [ ] LangGraph 工作流（第二期）
+
 未来Agent主流。
 
 理解：
