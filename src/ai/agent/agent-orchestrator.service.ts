@@ -7,8 +7,13 @@ import { ToolCallParserService } from '../tools/tool-call-parser.service';
 import { ToolPromptService } from '../tools/tool-prompt.service';
 import { ToolRegistryService } from '../tools/tool-registry.service';
 import { ToolCall } from '../tools/types/tool.type';
-import { MAX_AGENT_STEPS } from './agent.constants';
+import { AGENT_FINAL_ANSWER_SYSTEM, MAX_AGENT_STEPS } from './agent.constants';
 import { AgentContext } from './agent-context.type';
+
+interface ToolStepRecord {
+  toolCall: ToolCall;
+  result: string;
+}
 
 @Injectable()
 export class AgentOrchestratorService {
@@ -37,8 +42,9 @@ export class AgentOrchestratorService {
             maxSteps: MAX_AGENT_STEPS,
           });
 
+          const originalMessages = [...messages];
           const workingMessages = [...messages];
-          let executedSteps = 0;
+          const toolSteps: ToolStepRecord[] = [];
 
           for (let step = 1; step <= MAX_AGENT_STEPS; step += 1) {
             if (aborted) return;
@@ -66,20 +72,34 @@ export class AgentOrchestratorService {
             );
 
             if (!toolCall) {
-              await this.streamFinalAnswer(
-                subscriber,
-                workingMessages,
-                summary,
-                executedSteps,
-                (sub) => {
-                  streamSub = sub;
-                },
-                () => aborted,
-              );
+              if (toolSteps.length > 0) {
+                await this.streamFinalAnswer(
+                  subscriber,
+                  this.buildFinalMessages(originalMessages, toolSteps),
+                  summary,
+                  toolSteps.length,
+                  (sub) => {
+                    streamSub = sub;
+                  },
+                  () => aborted,
+                );
+              } else {
+                this.emit(subscriber, {
+                  phase: 'agent_done',
+                  steps: 0,
+                });
+                subscriber.next({
+                  data: {
+                    thinking: resolvedFirst.thinking,
+                    response: resolvedFirst.response,
+                    done: true,
+                  },
+                } as MessageEvent);
+                subscriber.complete();
+              }
               return;
             }
 
-            executedSteps += 1;
             this.emit(subscriber, {
               phase: 'tool_call',
               tool: toolCall.tool,
@@ -98,26 +118,26 @@ export class AgentOrchestratorService {
               ...(toolResult.error ? { error: toolResult.error } : {}),
             });
 
+            toolSteps.push({
+              toolCall,
+              result: toolResult.result,
+            });
+
+            // 决策轮仅保留简短观察，避免内部指令进入最终回答
             workingMessages.push(
               { role: 'assistant', content: toolCall.raw },
               {
                 role: 'user',
-                content: `工具 ${toolCall.tool} 返回结果：${toolResult.result}。若仍需其他工具请继续输出 JSON；否则将生成最终回答。`,
+                content: `工具 ${toolCall.tool} 返回：${toolResult.result}`,
               },
             );
           }
 
-          workingMessages.push({
-            role: 'user',
-            content:
-              '已达到最大推理步数，请根据已有工具结果用自然语言给出最终回答，不要输出 JSON。',
-          });
-
           await this.streamFinalAnswer(
             subscriber,
-            workingMessages,
+            this.buildFinalMessages(originalMessages, toolSteps),
             summary,
-            executedSteps,
+            toolSteps.length,
             (sub) => {
               streamSub = sub;
             },
@@ -139,6 +159,29 @@ export class AgentOrchestratorService {
 
   private buildToolMessages(messages: ChatMessage[]): ChatMessage[] {
     return [{ role: 'system', content: this.toolPrompt.build() }, ...messages];
+  }
+
+  /** 最终流式回答使用干净上下文，不携带工具决策 system 与 JSON 指令 */
+  private buildFinalMessages(
+    originalMessages: ChatMessage[],
+    toolSteps: ToolStepRecord[],
+  ): ChatMessage[] {
+    const result: ChatMessage[] = [
+      { role: 'system', content: AGENT_FINAL_ANSWER_SYSTEM },
+      ...originalMessages,
+    ];
+
+    for (const step of toolSteps) {
+      result.push(
+        { role: 'assistant', content: step.toolCall.raw },
+        {
+          role: 'user',
+          content: `工具 ${step.toolCall.tool} 返回结果：${step.result}。请根据该结果用自然语言回答用户。`,
+        },
+      );
+    }
+
+    return result;
   }
 
   private async executeTool(

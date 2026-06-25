@@ -29,12 +29,9 @@ describe('AgentOrchestratorService', () => {
     );
   });
 
-  it('无工具调用时应发送 agent_start 并完成流式输出', (done) => {
+  it('无工具调用时应直接返回首轮结果', (done) => {
     aiService.chat.mockResolvedValue({ thinking: '', response: '你好呀' });
     parser.parse.mockReturnValue(null);
-    aiService.streamChat.mockReturnValue(
-      of({ data: { response: '你好呀', done: true } } as MessageEvent),
-    );
 
     const events: Record<string, unknown>[] = [];
     service
@@ -44,20 +41,23 @@ describe('AgentOrchestratorService', () => {
         complete: () => {
           expect(events[0]).toMatchObject({ phase: 'agent_start' });
           expect(events.some((item) => item.phase === 'agent_done')).toBe(true);
-          expect(events.some((item) => item.done)).toBe(true);
+          expect(events.some((item) => item.done && item.response === '你好呀')).toBe(
+            true,
+          );
+          expect(aiService.streamChat).not.toHaveBeenCalled();
           done();
         },
         error: done.fail,
       });
   });
 
-  it('单步工具后应触发 tool_call 并流式总结', (done) => {
+  it('单步工具后应触发 tool_call 并用干净上下文流式总结', (done) => {
     aiService.chat
       .mockResolvedValueOnce({
         thinking: '',
         response: '{"tool":"weather","city":"武汉"}',
       })
-      .mockResolvedValueOnce({ thinking: '', response: '武汉天气不错' });
+      .mockResolvedValueOnce({ thinking: '', response: '' });
     parser.parse
       .mockReturnValueOnce({
         tool: 'weather',
@@ -66,9 +66,13 @@ describe('AgentOrchestratorService', () => {
       })
       .mockReturnValueOnce(null);
     registry.execute.mockResolvedValue('武汉 31℃');
-    aiService.streamChat.mockReturnValue(
-      of({ data: { response: '武汉 31℃', done: true } } as MessageEvent),
-    );
+    aiService.streamChat.mockImplementation((msgs) => {
+      const payload = JSON.stringify(msgs);
+      expect(payload).toContain('武汉 31℃');
+      expect(payload).not.toContain('继续输出 JSON');
+      expect(payload).toContain('直接回答用户');
+      return of({ data: { response: '武汉 31℃', done: true } } as MessageEvent);
+    });
 
     const events: Record<string, unknown>[] = [];
     service
