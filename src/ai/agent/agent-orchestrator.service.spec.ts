@@ -4,7 +4,10 @@ import { AgentContext } from './agent-context.type';
 
 describe('AgentOrchestratorService', () => {
   const aiService = { chat: jest.fn(), streamChat: jest.fn() };
-  const toolPrompt = { build: jest.fn(() => 'tool-system') };
+  const toolPrompt = {
+    build: jest.fn(() => 'tool-system'),
+    buildToolInstructions: jest.fn(() => 'tool-system'),
+  };
   const parser = { parse: jest.fn() };
   const registry = {
     setAgentContext: jest.fn(),

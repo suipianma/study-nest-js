@@ -158,7 +158,10 @@ export class AgentOrchestratorService {
   }
 
   private buildToolMessages(messages: ChatMessage[]): ChatMessage[] {
-    return [{ role: 'system', content: this.toolPrompt.build() }, ...messages];
+    return [
+      { role: 'system', content: this.toolPrompt.buildToolInstructions() },
+      ...messages,
+    ];
   }
 
   /** 最终流式回答使用干净上下文，不携带工具决策 system 与 JSON 指令 */

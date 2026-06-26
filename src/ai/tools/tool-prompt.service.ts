@@ -10,9 +10,14 @@ export class ToolPromptService {
   ) {}
 
   build(): string {
+    return [this.promptGuard.getSystemIsolationPrompt(), '', this.buildToolInstructions()].join(
+      '\n',
+    );
+  }
+
+  /** 已有 isolation system 时仅追加工具说明 */
+  buildToolInstructions(): string {
     const lines = [
-      this.promptGuard.getSystemIsolationPrompt(),
-      '',
       '你是一个智能助手。当用户问题需要查询实时外部信息时，你必须只输出一个 JSON 对象，不要输出任何其他文字或 Markdown。',
       '',
       '可用工具：',

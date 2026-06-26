@@ -11,6 +11,7 @@ import { ToolPromptService } from './tool-prompt.service';
 import { ToolRegistryService } from './tool-registry.service';
 import { ToolCall } from './types/tool.type';
 
+/** @deprecated 主链路已改由 AiOrchestrator + AgentOrchestrator / Direct LLM，保留供兼容与单测参考 */
 @Injectable()
 export class ToolOrchestratorService {
   constructor(

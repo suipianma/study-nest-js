@@ -1,7 +1,9 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { RetrievalService } from '../../knowledge-base/retrieval.service';
 import { PromptGuardService } from '../../security/prompt-guard.service';
 import { AgentContext } from '../agent/agent-context.type';
+import { createKnowledgeBaseSearchTool } from './implementations/knowledge-base-search.tool';
 import { createWeatherTool } from './implementations/weather.tool';
 import { ToolDefinition } from './types/tool.type';
 
@@ -13,10 +15,19 @@ export class ToolRegistryService implements OnModuleInit {
   constructor(
     private readonly config: ConfigService,
     private readonly promptGuard: PromptGuardService,
+    private readonly retrievalService: RetrievalService,
   ) {}
 
   onModuleInit(): void {
     this.register(createWeatherTool(this.config));
+    this.register(
+      createKnowledgeBaseSearchTool(this.retrievalService, () => {
+        if (!this.agentContext) {
+          throw new Error('Agent 上下文未初始化');
+        }
+        return this.agentContext;
+      }),
+    );
   }
 
   setAgentContext(context: AgentContext): void {

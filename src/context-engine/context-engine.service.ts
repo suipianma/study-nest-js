@@ -20,6 +20,10 @@ import { createToolContextBlock } from './tool-context.util';
 export interface BuildContextPlanOptions extends TokenBudgetPlanInput {
   promptId?: string;
   injectPrompt?: boolean;
+  /** 为 true 时由 Prompt Stage 单独注入 */
+  skipPrompt?: boolean;
+  /** 为 true 时由 RAG Stage 单独注入 */
+  skipRag?: boolean;
   model?: string;
   requestId?: string;
   currentUserMessage?: string;
@@ -110,6 +114,82 @@ export class ContextEngineService {
     };
   }
 
+  /** 将 Prompt / RAG 等额外块合并进规划并重新做预算裁剪 */
+  enrichPlan(
+    conversation: Conversation,
+    plan: ContextPlan,
+    extraBlocks: ContextBlock[],
+    options: TokenBudgetPlanInput = {},
+  ): ContextPlan {
+    if (extraBlocks.length === 0) {
+      return plan;
+    }
+
+    const merged = [...plan.selectedBlocks, ...extraBlocks];
+    const pruningResult = this.contextPruningService.pruneForBudget({
+      blocks: merged,
+      summarizedMessageId: conversation.summarizedMessageId,
+    });
+    const budgetResult = this.tokenBudgetManager.plan(
+      pruningResult.selectedBlocks,
+      {
+        maxTokens: options.maxTokens ?? plan.budget.maxTokens,
+        reservedForResponse:
+          options.reservedForResponse ?? plan.budget.reservedForResponse,
+      },
+    );
+    const mergedBudgetResult = {
+      ...budgetResult,
+      droppedBlocks: [
+        ...plan.droppedBlocks,
+        ...pruningResult.preDroppedBlocks,
+        ...budgetResult.droppedBlocks,
+      ],
+    };
+    const traceSnapshot = this.contextTraceService.buildSnapshot(
+      plan.traceId,
+      mergedBudgetResult,
+    );
+
+    return {
+      ...plan,
+      budget: mergedBudgetResult.budget,
+      selectedBlocks: mergedBudgetResult.selectedBlocks,
+      droppedBlocks: mergedBudgetResult.droppedBlocks,
+      trace: [...plan.trace, traceSnapshot],
+    };
+  }
+
+  /** 供 Prompt Stage 构建 system prompt 块 */
+  buildPromptBlock(
+    conversation: Conversation,
+    dbMessages: Message[],
+    promptId: string,
+  ): ContextBlock | null {
+    return this.createPromptBlock(
+      dbMessages,
+      { injectPrompt: true, promptId },
+      conversation,
+    );
+  }
+
+  /** 供 RAG Stage 构建检索块 */
+  async buildRagBlocks(
+    conversation: Conversation,
+    dbMessages: Message[],
+    options: {
+      knowledgeBaseIds?: number[];
+      currentUser?: JwtUser;
+      currentUserMessage?: string;
+    },
+  ): Promise<ContextBlock[]> {
+    return this.createRagBlocks(conversation, dbMessages, {
+      knowledgeBaseIds: options.knowledgeBaseIds,
+      currentUser: options.currentUser,
+      currentUserMessage: options.currentUserMessage,
+    });
+  }
+
   private async buildBlocks(
     conversation: Conversation,
     dbMessages: Message[],
@@ -117,7 +197,9 @@ export class ContextEngineService {
   ): Promise<ContextBlock[]> {
     const blocks: ContextBlock[] = [this.createIsolationPolicyBlock(conversation)];
 
-    const promptBlock = this.createPromptBlock(dbMessages, options, conversation);
+    const promptBlock = options.skipPrompt
+      ? null
+      : this.createPromptBlock(dbMessages, options, conversation);
     if (promptBlock) {
       blocks.push(promptBlock);
     }
@@ -132,7 +214,9 @@ export class ContextEngineService {
       blocks.push(...memoryBlocks);
     }
 
-    const ragBlocks = await this.createRagBlocks(conversation, dbMessages, options);
+    const ragBlocks = options.skipRag
+      ? []
+      : await this.createRagBlocks(conversation, dbMessages, options);
     if (ragBlocks.length > 0) {
       blocks.push(...ragBlocks);
     }

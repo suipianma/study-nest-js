@@ -11,7 +11,9 @@ import {
   of,
   tap,
 } from 'rxjs';
-import { ToolOrchestratorService } from '../ai/tools/tool-orchestrator.service';
+import { AgentOrchestratorService } from '../ai/agent/agent-orchestrator.service';
+import { AgentContext } from '../ai/agent/agent-context.type';
+import { AiService } from '../ai/ai.service';
 import { ChatMessage } from '../ai/types/chat-message.type';
 import { resolveModelReply } from '../ai/utils/reply.util';
 import { ContextPlan } from '../context-engine/types/context-plan.type';
@@ -22,6 +24,7 @@ import { SummaryService } from './summary.service';
 import { TitleService } from './title.service';
 import { StreamSessionSnapshot } from './types/stream-session.type';
 import type { StreamSession } from './types/stream-session.type';
+import type { ExecutionMode } from '../ai/orchestrator/types/pipeline-context.type';
 
 interface StreamGenerationContext {
   streamId: string;
@@ -31,6 +34,8 @@ interface StreamGenerationContext {
   contextPlan: ContextPlan;
   ollamaMessages: ChatMessage[];
   summary: string | null;
+  executionMode: ExecutionMode;
+  agentContext: AgentContext;
 }
 
 interface StreamPayload {
@@ -74,7 +79,8 @@ export class ConversationStreamService {
 
   constructor(
     private readonly streamSessionService: StreamSessionService,
-    private readonly toolOrchestrator: ToolOrchestratorService,
+    private readonly agentOrchestrator: AgentOrchestratorService,
+    private readonly aiService: AiService,
     private readonly conversationService: ConversationService,
     private readonly summaryService: SummaryService,
     private readonly titleService: TitleService,
@@ -222,12 +228,7 @@ export class ConversationStreamService {
     let finishedNormally = false;
     let endedByError = false;
 
-    const subscription = this.toolOrchestrator
-      .streamWithTools(
-        context.ollamaMessages,
-        context.summary,
-        context.contextPlan,
-      )
+    const subscription = this.resolveStreamObservable(context)
       .pipe(
         tap((event) => {
           const payload = this.parseStreamPayload(event.data);
@@ -313,6 +314,22 @@ export class ConversationStreamService {
       });
 
     this.generationSubs.set(context.streamId, subscription);
+  }
+
+  private resolveStreamObservable(
+    context: StreamGenerationContext,
+  ): Observable<MessageEvent> {
+    if (context.executionMode === 'agent') {
+      return this.agentOrchestrator.streamWithAgent(
+        context.ollamaMessages,
+        context.summary,
+        context.agentContext,
+      );
+    }
+
+    return this.aiService.streamChat(context.ollamaMessages, context.summary, {
+      skipCache: true,
+    });
   }
 
   private async finalizeGeneration(options: {

@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { AiOrchestratorModule } from '../ai/orchestrator/ai-orchestrator.module';
 import { ContextEngineModule } from '../context-engine/context-engine.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RedisModule } from '../redis/redis.module';
@@ -13,7 +14,14 @@ import { TitleService } from './title.service';
 import { JwtQueryGuard } from './guards/jwt-query.guard';
 
 @Module({
-  imports: [PrismaModule, RedisModule, AiModule, ContextEngineModule, SecurityModule],
+  imports: [
+    PrismaModule,
+    RedisModule,
+    AiModule,
+    ContextEngineModule,
+    SecurityModule,
+    forwardRef(() => AiOrchestratorModule),
+  ],
   controllers: [ConversationController],
   providers: [
     ConversationService,
@@ -22,6 +30,13 @@ import { JwtQueryGuard } from './guards/jwt-query.guard';
     SummaryService,
     TitleService,
     JwtQueryGuard,
+  ],
+  exports: [
+    ConversationService,
+    ConversationStreamService,
+    StreamSessionService,
+    SummaryService,
+    TitleService,
   ],
 })
 export class ConversationModule {}

@@ -528,4 +528,52 @@ describe('ContextEngineService.buildPlan', () => {
       }),
     );
   });
+
+  it('skipPrompt 为 true 时不应包含 prompt 块', async () => {
+    (promptTemplateService.findById as jest.Mock).mockReturnValue({
+      id: 'tpl-1',
+      name: '测试',
+    });
+
+    const plan = await service.buildPlan(createConversation(), [], {
+      injectPrompt: true,
+      promptId: 'tpl-1',
+      skipPrompt: true,
+      currentUserMessage: '问题',
+    });
+
+    expect(plan.selectedBlocks.some((block) => block.type === 'prompt')).toBe(
+      false,
+    );
+  });
+
+  it('skipRag 为 true 时不应调用检索', async () => {
+    await service.buildPlan(createConversation(), [createMessage(1, 'user', '问')], {
+      skipRag: true,
+      knowledgeBaseIds: [1],
+      currentUser: { userId: 1, role: 'user' },
+    });
+
+    expect(retrievalService.search).not.toHaveBeenCalled();
+  });
+
+  it('enrichPlan 应合并额外块并保留 trace', async () => {
+    const conversation = createConversation();
+    (promptTemplateService.findById as jest.Mock).mockReturnValue({
+      id: 'tpl-x',
+      name: 'tpl',
+    });
+    const base = await service.buildPlan(conversation, [], {
+      skipPrompt: true,
+      skipRag: true,
+      currentUserMessage: 'hi',
+    });
+    const promptBlock = service.buildPromptBlock(conversation, [], 'tpl-x');
+
+    expect(promptBlock).not.toBeNull();
+    const enriched = service.enrichPlan(conversation, base, [promptBlock!]);
+
+    expect(enriched.selectedBlocks.some((b) => b.type === 'prompt')).toBe(true);
+    expect(enriched.trace.length).toBeGreaterThan(base.trace.length);
+  });
 });
