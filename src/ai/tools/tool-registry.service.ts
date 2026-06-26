@@ -1,5 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PromptGuardService } from '../../security/prompt-guard.service';
 import { AgentContext } from '../agent/agent-context.type';
 import { createWeatherTool } from './implementations/weather.tool';
 import { ToolDefinition } from './types/tool.type';
@@ -9,7 +10,10 @@ export class ToolRegistryService implements OnModuleInit {
   private readonly tools = new Map<string, ToolDefinition>();
   private agentContext: AgentContext | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly promptGuard: PromptGuardService,
+  ) {}
 
   onModuleInit(): void {
     this.register(createWeatherTool(this.config));
@@ -40,6 +44,7 @@ export class ToolRegistryService implements OnModuleInit {
     if (!tool) {
       throw new Error(`未知工具: ${name}`);
     }
-    return tool.execute(args);
+    const safeArgs = this.promptGuard.sanitizeToolArgs(args);
+    return tool.execute(safeArgs);
   }
 }

@@ -1,6 +1,6 @@
 import { Conversation, Message } from '@prisma/client';
 import { PromptTemplateService } from '../ai/prompt-template.service';
-import { RagChunk } from '../knowledge-base/types/rag.type';
+import { PromptGuardService } from '../security/prompt-guard.service';
 import { SUMMARY_TRIGGER } from './constants';
 import { ContextBuilderService } from './context-builder.service';
 
@@ -14,10 +14,48 @@ describe('ContextBuilderService', () => {
       parseContextFromUserMessage: jest.fn((content: string) => content),
     } as unknown as PromptTemplateService;
 
-    service = new ContextBuilderService(promptTemplateService);
+    service = new ContextBuilderService(
+      promptTemplateService,
+      new PromptGuardService(),
+    );
   });
 
-  it('should inject prompt -> rag -> summary in order', () => {
+  it('should prepend system isolation and wrap user messages', () => {
+    const conversation = {
+      id: 1,
+      userId: 1,
+      title: 'test',
+      summary: null,
+      summarizedMessageId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      promptTemplateId: null,
+    } as Conversation;
+
+    const dbMessages = [
+      {
+        id: 1,
+        conversationId: 1,
+        role: 'user',
+        content: 'hello',
+        thinking: null,
+        fromCache: false,
+        promptTokens: null,
+        completionTokens: null,
+        createdAt: new Date(),
+      } as Message,
+    ];
+
+    const result = service.build(conversation, dbMessages);
+
+    expect(result[0].role).toBe('system');
+    expect(result[0].content).toContain('安全规则');
+    expect(result[1].role).toBe('user');
+    expect(result[1].content).toContain('<<USER_INPUT>>');
+    expect(result[1].content).toContain('hello');
+  });
+
+  it('should inject prompt system after isolation in long conversations', () => {
     const conversation = {
       id: 1,
       userId: 1,
@@ -44,67 +82,13 @@ describe('ContextBuilderService', () => {
         }) as Message,
     );
 
-    const ragChunks: RagChunk[] = [
-      {
-        chunkId: 11,
-        documentId: 22,
-        documentName: '员工手册.pdf',
-        knowledgeBaseId: 33,
-        page: 3,
-        content: 'RAG_CONTENT',
-        score: 0.9,
-      },
-    ];
-
     const result = service.build(conversation, dbMessages, {
       injectPrompt: true,
       promptId: 'tpl-1',
-      ragChunks,
-      ragEnabled: true,
     });
 
-    expect(result[0]).toMatchObject({ role: 'system', content: 'PROMPT_SYSTEM' });
-    expect(result[1]).toMatchObject({ role: 'system' });
-    expect(result[1].content).toContain('RAG_CONTENT');
-    expect(result[2]).toMatchObject({
-      role: 'system',
-      content: '历史对话摘要：\nSUMMARY_TEXT',
-    });
-  });
-
-  it('should inject rag system in short conversation path', () => {
-    const conversation = {
-      id: 1,
-      userId: 1,
-      title: 'test',
-      summary: null,
-      summarizedMessageId: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      promptTemplateId: null,
-    } as Conversation;
-
-    const dbMessages = [
-      {
-        id: 1,
-        conversationId: 1,
-        role: 'user',
-        content: 'hello',
-        thinking: null,
-        fromCache: false,
-        promptTokens: null,
-        completionTokens: null,
-        createdAt: new Date(),
-      } as Message,
-    ];
-
-    const result = service.build(conversation, dbMessages, {
-      ragChunks: [],
-      ragEnabled: true,
-    });
-
-    expect(result[0]).toMatchObject({ role: 'system' });
-    expect(result[0].content).toContain('知识库中未找到相关信息');
-    expect(result[1]).toMatchObject({ role: 'user', content: 'hello' });
+    expect(result[0].role).toBe('system');
+    expect(result[1]).toMatchObject({ role: 'system', content: 'PROMPT_SYSTEM' });
+    expect(result[2].content).toContain('历史对话摘要');
   });
 });

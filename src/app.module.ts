@@ -17,9 +17,11 @@ import { UploadModule } from './upload/upload.module';
 import { ChatModule } from './chat/chat.module';
 import { AiModule } from './ai/ai.module';
 import { ConversationModule } from './conversation/conversation.module';
+import { SecurityModule } from './security/security.module';
 
 @Module({
   imports: [
+    SecurityModule,
     ConfigModule.forRoot({
       isGlobal: true,
       ignoreEnvFile: true,

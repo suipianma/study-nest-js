@@ -1,12 +1,18 @@
 import { Injectable } from '@nestjs/common';
+import { PromptGuardService } from '../../security/prompt-guard.service';
 import { ToolRegistryService } from './tool-registry.service';
 
 @Injectable()
 export class ToolPromptService {
-  constructor(private readonly registry: ToolRegistryService) {}
+  constructor(
+    private readonly registry: ToolRegistryService,
+    private readonly promptGuard: PromptGuardService,
+  ) {}
 
   build(): string {
     const lines = [
+      this.promptGuard.getSystemIsolationPrompt(),
+      '',
       '你是一个智能助手。当用户问题需要查询实时外部信息时，你必须只输出一个 JSON 对象，不要输出任何其他文字或 Markdown。',
       '',
       '可用工具：',

@@ -2,12 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { Conversation, Message } from '@prisma/client';
 import { PromptTemplateService } from '../ai/prompt-template.service';
 import { ChatMessage } from '../ai/types/chat-message.type';
+import { PromptGuardService } from '../security/prompt-guard.service';
 import { RECENT_COUNT, SUMMARY_TRIGGER } from './constants';
 
 @Injectable()
 export class ContextBuilderService {
   constructor(
     private readonly promptTemplateService: PromptTemplateService,
+    private readonly promptGuard: PromptGuardService,
   ) {}
 
   /** 按 spec 组装发给模型的 messages；仅当 injectPrompt 为 true 时注入模板 system */
@@ -16,7 +18,9 @@ export class ContextBuilderService {
     dbMessages: Message[],
     options?: { injectPrompt?: boolean; promptId?: string },
   ): ChatMessage[] {
-    const result: ChatMessage[] = [];
+    const result: ChatMessage[] = [
+      { role: 'system', content: this.promptGuard.getSystemIsolationPrompt() },
+    ];
 
     if (options?.injectPrompt && options.promptId) {
       const template = this.promptTemplateService.findById(options.promptId);
@@ -82,6 +86,10 @@ export class ContextBuilderService {
 
     if (m.role === 'assistant' && m.thinking) {
       content = `${m.thinking}\n${m.content}`;
+    }
+
+    if (m.role === 'user') {
+      content = this.promptGuard.wrapForModel(content);
     }
 
     return {

@@ -29,7 +29,10 @@ import {
 } from 'rxjs';
 import { PromptTemplateService } from '../ai/prompt-template.service';
 import { ToolOrchestratorService } from '../ai/tools/tool-orchestrator.service';
+import { ToolRegistryService } from '../ai/tools/tool-registry.service';
 import { resolveModelReply } from '../ai/utils/reply.util';
+import { ContentModerationService } from '../security/content-moderation.service';
+import { PromptGuardService } from '../security/prompt-guard.service';
 import { ConversationService } from './conversation.service';
 import { ContextBuilderService } from './context-builder.service';
 import { SummaryService } from './summary.service';
@@ -71,6 +74,9 @@ export class ConversationController {
     private readonly titleService: TitleService,
     private readonly promptTemplateService: PromptTemplateService,
     private readonly toolOrchestrator: ToolOrchestratorService,
+    private readonly promptGuard: PromptGuardService,
+    private readonly contentModeration: ContentModerationService,
+    private readonly toolRegistry: ToolRegistryService,
   ) {}
 
   @Get()
@@ -147,11 +153,22 @@ export class ConversationController {
 
     const conversationId = +id;
     const userId = req.user.userId;
-    const trimmedContent = content.trim();
+    const validation = this.promptGuard.validateUserInput(
+      content.trim(),
+      this.toolRegistry.getKnownToolNames(),
+    );
+    if (!validation.ok) {
+      throw new BadRequestException(validation.reason);
+    }
 
     return defer(() =>
       from(
-        this.prepareStream(conversationId, userId, trimmedContent, promptId),
+        this.prepareStream(
+          conversationId,
+          userId,
+          validation.sanitized,
+          promptId,
+        ),
       ),
     ).pipe(switchMap((obs) => obs));
   }
@@ -275,11 +292,14 @@ export class ConversationController {
         }),
         finalize(() => {
           const resolved = resolveModelReply(thinking, response);
-          const finalContent = finishedNormally
+          let finalContent = finishedNormally
             ? resolved.response
             : resolved.response
               ? `${resolved.response}[回复中断]`
               : '[回复中断]';
+
+          const moderated = this.contentModeration.moderate(finalContent);
+          finalContent = moderated.text;
 
           // 异步持久化，不阻塞 SSE 关闭
           void this.persistAssistantReply({

@@ -23,6 +23,11 @@ import { RedisModule } from '../redis/redis.module';
     ToolOrchestratorService,
   ],
   controllers: [AiController],
-  exports: [AiService, PromptTemplateService, ToolOrchestratorService],
+  exports: [
+    AiService,
+    PromptTemplateService,
+    ToolOrchestratorService,
+    ToolRegistryService,
+  ],
 })
 export class AiModule {}
