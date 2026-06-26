@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { AiService } from './ai.service';
 import { AiController } from './ai.controller';
 import { AiCacheService } from './ai-cache.service';
@@ -8,10 +8,11 @@ import { ToolCallParserService } from './tools/tool-call-parser.service';
 import { ToolOrchestratorService } from './tools/tool-orchestrator.service';
 import { ToolPromptService } from './tools/tool-prompt.service';
 import { ToolRegistryService } from './tools/tool-registry.service';
+import { ContextEngineModule } from '../context-engine/context-engine.module';
 import { RedisModule } from '../redis/redis.module';
 
 @Module({
-  imports: [RedisModule],
+  imports: [RedisModule, forwardRef(() => ContextEngineModule)],
   providers: [
     AiService,
     AiCacheService,

@@ -1,8 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { Observable, Subscriber } from 'rxjs';
 import { AiService } from '../ai.service';
 import { ChatMessage } from '../types/chat-message.type';
 import { resolveModelReply } from '../utils/reply.util';
+import { ContextComposerService } from '../../context-engine/context-composer.service';
+import { ContextEngineService } from '../../context-engine/context-engine.service';
+import { ContextPlan } from '../../context-engine/types/context-plan.type';
 import { ToolCallParserService } from './tool-call-parser.service';
 import { ToolPromptService } from './tool-prompt.service';
 import { ToolRegistryService } from './tool-registry.service';
@@ -15,12 +18,17 @@ export class ToolOrchestratorService {
     private readonly toolPrompt: ToolPromptService,
     private readonly parser: ToolCallParserService,
     private readonly registry: ToolRegistryService,
+    @Inject(forwardRef(() => ContextEngineService))
+    private readonly contextEngine: ContextEngineService,
+    @Inject(forwardRef(() => ContextComposerService))
+    private readonly contextComposer: ContextComposerService,
   ) {}
 
   /** 工具感知流式：第一轮判工具 → 执行 → 第二轮流式回答 */
   streamWithTools(
     messages: ChatMessage[],
     summary?: string | null,
+    contextPlan?: ContextPlan,
   ): Observable<MessageEvent> {
     return new Observable((subscriber) => {
       let streamSub: { unsubscribe: () => void } | undefined;
@@ -70,6 +78,7 @@ export class ToolOrchestratorService {
             messages,
             toolCall,
             toolResult.result,
+            contextPlan,
           );
 
           streamSub = this.aiService
@@ -104,7 +113,17 @@ export class ToolOrchestratorService {
     messages: ChatMessage[],
     toolCall: ToolCall,
     toolResult: string,
+    contextPlan?: ContextPlan,
   ): ChatMessage[] {
+    if (contextPlan) {
+      const round2Plan = this.contextEngine.extendPlanWithToolResult(
+        contextPlan,
+        toolCall.tool,
+        toolResult,
+      );
+      return this.contextComposer.composeRound2(round2Plan, toolCall);
+    }
+
     return [
       ...messages,
       { role: 'assistant', content: toolCall.raw },

@@ -33,8 +33,9 @@ import { ToolRegistryService } from '../ai/tools/tool-registry.service';
 import { resolveModelReply } from '../ai/utils/reply.util';
 import { ContentModerationService } from '../security/content-moderation.service';
 import { PromptGuardService } from '../security/prompt-guard.service';
+import { ContextComposerService } from '../context-engine/context-composer.service';
+import { ContextEngineService } from '../context-engine/context-engine.service';
 import { ConversationService } from './conversation.service';
-import { ContextBuilderService } from './context-builder.service';
 import { SummaryService } from './summary.service';
 import { TitleService } from './title.service';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
@@ -69,7 +70,8 @@ interface StreamPayload {
 export class ConversationController {
   constructor(
     private readonly conversationService: ConversationService,
-    private readonly contextBuilder: ContextBuilderService,
+    private readonly contextEngine: ContextEngineService,
+    private readonly contextComposer: ContextComposerService,
     private readonly summaryService: SummaryService,
     private readonly titleService: TitleService,
     private readonly promptTemplateService: PromptTemplateService,
@@ -145,6 +147,7 @@ export class ConversationController {
     @Param('id') id: string,
     @Query('content') content: string,
     @Query('promptId') promptId: string | undefined,
+    @Query('knowledgeBaseIds') knowledgeBaseIdsRaw: string | string[] | undefined,
     @Req() req: Request & { user: JwtPayload },
   ): Observable<MessageEvent> {
     if (!content?.trim()) {
@@ -153,6 +156,7 @@ export class ConversationController {
 
     const conversationId = +id;
     const userId = req.user.userId;
+    const knowledgeBaseIds = this.parseKnowledgeBaseIds(knowledgeBaseIdsRaw);
     const validation = this.promptGuard.validateUserInput(
       content.trim(),
       this.toolRegistry.getKnownToolNames(),
@@ -168,6 +172,8 @@ export class ConversationController {
           userId,
           validation.sanitized,
           promptId,
+          knowledgeBaseIds,
+          req.user,
         ),
       ),
     ).pipe(switchMap((obs) => obs));
@@ -179,6 +185,8 @@ export class ConversationController {
     userId: number,
     content: string,
     promptId?: string,
+    knowledgeBaseIds?: number[],
+    currentUser?: JwtPayload,
   ): Promise<Observable<MessageEvent>> {
     await this.conversationService.findOneOrFail(conversationId, userId);
     await this.conversationService.assertMessageLimit(conversationId);
@@ -252,10 +260,15 @@ export class ConversationController {
       );
     }
 
-    const ollamaMessages = this.contextBuilder.build(conversation, messages, {
+    const contextPlan = await this.contextEngine.buildPlan(conversation, messages, {
       injectPrompt: usePrompt,
       promptId: trimmedPromptId,
+      knowledgeBaseIds,
+      currentUser: currentUser
+        ? { userId: currentUser.userId, role: currentUser.role }
+        : undefined,
     });
+    const ollamaMessages = this.contextComposer.compose(contextPlan);
     const isFirstAiReply = assistantCountBefore === 0;
 
     let thinking = '';
@@ -264,9 +277,10 @@ export class ConversationController {
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
     let finishedNormally = false;
+    let endedByError = false;
 
     return this.toolOrchestrator
-      .streamWithTools(ollamaMessages, conversation.summary)
+      .streamWithTools(ollamaMessages, conversation.summary, contextPlan)
       .pipe(
         tap((event) => {
           const payload = this.parseStreamPayload(event.data);
@@ -282,6 +296,7 @@ export class ConversationController {
           if (payload.done) finishedNormally = true;
         }),
         catchError((err: unknown) => {
+          endedByError = true;
           const message = this.extractStreamErrorMessage(err);
           return of({
             data: {
@@ -292,6 +307,15 @@ export class ConversationController {
         }),
         finalize(() => {
           const resolved = resolveModelReply(thinking, response);
+          const hasMeaningfulModelOutput = Boolean(
+            resolved.response.trim() || resolved.thinking.trim(),
+          );
+
+          // 纯系统异常且无模型输出时，不写入无意义 assistant 消息
+          if (endedByError && !hasMeaningfulModelOutput) {
+            return;
+          }
+
           let finalContent = finishedNormally
             ? resolved.response
             : resolved.response
@@ -398,5 +422,45 @@ export class ConversationController {
     }
 
     return {};
+  }
+
+  private parseKnowledgeBaseIds(
+    raw: string | string[] | undefined,
+  ): number[] | undefined {
+    if (raw === undefined) {
+      return undefined;
+    }
+
+    const segments = (Array.isArray(raw) ? raw : [raw]).flatMap((item) => {
+      const trimmed = item.trim();
+      if (!trimmed) {
+        return [];
+      }
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            return parsed.map((value) => String(value));
+          }
+        } catch {
+          throw new BadRequestException('knowledgeBaseIds 参数格式错误');
+        }
+      }
+      return trimmed.split(',');
+    });
+
+    if (segments.length === 0) {
+      return undefined;
+    }
+
+    const parsedIds = segments.map((segment) => {
+      const value = Number(segment.trim());
+      if (!Number.isInteger(value) || value <= 0) {
+        throw new BadRequestException('knowledgeBaseIds 必须为正整数数组');
+      }
+      return value;
+    });
+
+    return [...new Set(parsedIds)];
   }
 }

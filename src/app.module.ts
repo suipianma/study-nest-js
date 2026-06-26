@@ -17,6 +17,7 @@ import { UploadModule } from './upload/upload.module';
 import { ChatModule } from './chat/chat.module';
 import { AiModule } from './ai/ai.module';
 import { ConversationModule } from './conversation/conversation.module';
+import { ContextEngineModule } from './context-engine/context-engine.module';
 import { SecurityModule } from './security/security.module';
 
 @Module({
@@ -40,6 +41,7 @@ import { SecurityModule } from './security/security.module';
     UploadModule,
     ChatModule,
     AiModule,
+    ContextEngineModule,
     ConversationModule,
   ],
   controllers: [AppController],

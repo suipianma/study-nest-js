@@ -3,6 +3,7 @@ import { Conversation, Message } from '@prisma/client';
 import { AiService } from '../ai/ai.service';
 import { ChatMessage } from '../ai/types/chat-message.type';
 import { PrismaService } from '../prisma/prisma.service';
+import { PromptGuardService } from '../security/prompt-guard.service';
 import {
   RECENT_COUNT,
   SUMMARY_MAX_CHARS,
@@ -16,6 +17,7 @@ export class SummaryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiService: AiService,
+    private readonly promptGuard: PromptGuardService,
   ) {}
 
   /**
@@ -81,11 +83,18 @@ export class SummaryService {
 
     summary = await this.compressIfNeeded(summary);
 
-    await this.prisma.conversation.update({
-      where: { id: conversationId },
+    const newSummarizedMessageId = toSummarize[toSummarize.length - 1].id;
+    await this.prisma.conversation.updateMany({
+      where: {
+        id: conversationId,
+        OR: [
+          { summarizedMessageId: null },
+          { summarizedMessageId: { lt: newSummarizedMessageId } },
+        ],
+      },
       data: {
         summary,
-        summarizedMessageId: toSummarize[toSummarize.length - 1].id,
+        summarizedMessageId: newSummarizedMessageId,
       },
     });
   }
@@ -113,17 +122,34 @@ export class SummaryService {
     existingSummary: string | null,
     messages: Message[],
   ): string {
+    const safeSummary = existingSummary
+      ? this.promptGuard.sanitizeStoredContent(existingSummary)
+      : '';
     const formatted = messages
-      .map((m) => `${m.role}: ${m.content}`)
+      .map((m) => {
+        const safeContent = this.promptGuard.sanitizeStoredContent(m.content);
+        return `[message-${m.id}-begin]\n${m.role}: ${safeContent}\n[message-${m.id}-end]`;
+      })
       .join('\n');
+    const wrappedDialogue = this.promptGuard.wrapForModel(formatted);
 
-    return `请将以下对话历史压缩为简洁摘要（200-400字），保留用户核心问题、结论、偏好、未决问题。
+    return `请基于已有摘要与新增对话，输出分层摘要（总长度建议200-400字），保留用户核心问题、结论、偏好、未决问题。
+输出必须严格使用以下结构与标题：
+【滚动摘要】
+...
+【主题摘要】
+...
+【决策与待办】
+...
+其中“决策与待办”请使用简短条目列出已确认决策和后续待办。
 
 【已有摘要】
-${existingSummary || '无'}
+${safeSummary || '无'}
 
 【新增对话】
-${formatted}`;
+<<<NEW_DIALOGUE_START>>>
+${wrappedDialogue}
+<<<NEW_DIALOGUE_END>>>`;
   }
 
   /** 摘要超长时二次压缩 */
