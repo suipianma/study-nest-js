@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Observable, Subscriber } from 'rxjs';
+import { randomUUID } from 'crypto';
 import { AiService } from '../ai.service';
 import { ChatMessage } from '../types/chat-message.type';
 import { resolveModelReply } from '../utils/reply.util';
@@ -100,11 +101,13 @@ export class AgentOrchestratorService {
               return;
             }
 
+            const toolCallId = randomUUID();
             this.emit(subscriber, {
               phase: 'tool_call',
               tool: toolCall.tool,
               args: toolCall.args,
               step,
+              toolCallId,
             });
 
             const toolResult = await this.executeTool(toolCall);
@@ -115,6 +118,7 @@ export class AgentOrchestratorService {
               tool: toolCall.tool,
               result: toolResult.result,
               step,
+              toolCallId,
               ...(toolResult.error ? { error: toolResult.error } : {}),
             });
 

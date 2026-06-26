@@ -47,12 +47,22 @@ interface StreamPayload {
   fromCache?: boolean;
   promptTokens?: number;
   completionTokens?: number;
-  phase?: 'tool_call' | 'tool_result';
+  phase?:
+    | 'tool_call'
+    | 'tool_result'
+    | 'agent_start'
+    | 'agent_step'
+    | 'agent_done';
   tool?: string;
   args?: Record<string, string>;
   result?: string;
   error?: string;
   streamId?: string;
+  requestId?: string;
+  toolCallId?: string;
+  step?: number;
+  maxSteps?: number;
+  steps?: number;
   seq?: number;
 }
 
@@ -220,6 +230,18 @@ export class ConversationStreamService {
   startDetachedGeneration(context: StreamGenerationContext): void {
     this.getOrCreateSubject(context.streamId);
 
+    const tracePayload = (payload: StreamPayload): StreamPayload => ({
+      ...payload,
+      streamId: context.streamId,
+      requestId: context.contextPlan.requestId,
+    });
+
+    // 首帧携带 requestId，供前端 Observability 关联
+    this.emitLive(
+      context.streamId,
+      tracePayload({ streamId: context.streamId }),
+    );
+
     let thinking = '';
     let response = '';
     let fromCache = false;
@@ -234,10 +256,7 @@ export class ConversationStreamService {
           const payload = this.parseStreamPayload(event.data);
 
           if (payload.phase) {
-            this.emitLive(context.streamId, {
-              ...payload,
-              streamId: context.streamId,
-            });
+            this.emitLive(context.streamId, tracePayload(payload));
             return;
           }
 
@@ -252,15 +271,17 @@ export class ConversationStreamService {
           }
           if (payload.done) finishedNormally = true;
 
-          this.emitLive(context.streamId, {
-            ...payload,
-            streamId: context.streamId,
-            thinking: payload.thinking ?? thinking,
-            response: payload.response ?? response,
-            fromCache,
-            promptTokens,
-            completionTokens,
-          });
+          this.emitLive(
+            context.streamId,
+            tracePayload({
+              ...payload,
+              thinking: payload.thinking ?? thinking,
+              response: payload.response ?? response,
+              fromCache,
+              promptTokens,
+              completionTokens,
+            }),
+          );
 
           this.scheduleRedisFlush(context.streamId, {
             thinking,
@@ -278,11 +299,13 @@ export class ConversationStreamService {
             'failed',
             message,
           );
-          this.emitLive(context.streamId, {
-            streamId: context.streamId,
-            error: message,
-            done: true,
-          });
+          this.emitLive(
+            context.streamId,
+            tracePayload({
+              error: message,
+              done: true,
+            }),
+          );
           this.completeSubject(context.streamId);
           return of({
             data: {
