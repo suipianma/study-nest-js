@@ -1,0 +1,14 @@
+标题：消息分页机制
+
+内容：
+聊天消息支持分页加载。
+
+接口：
+GET /messages?beforeId=xxx
+
+机制：
+- 按时间倒序加载
+- 每次返回 20 条
+- 支持 hasMore 标记
+
+前端使用虚拟列表优化性能（react-virtuoso）

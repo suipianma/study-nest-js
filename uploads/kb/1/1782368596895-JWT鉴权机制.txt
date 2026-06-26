@@ -1,0 +1,14 @@
+标题：JWT鉴权机制
+
+内容：
+系统使用 JWT（JSON Web Token）作为认证方式。
+
+流程如下：
+1. 用户登录成功后生成 token
+2. token 由 header.payload.signature 组成
+3. payload 中包含 userId 和过期时间
+4. 后端通过 secret 校验签名是否正确
+5. token 过期后需要重新登录
+
+优点：无状态、可扩展性强
+缺点：无法主动失效（除非结合 Redis）

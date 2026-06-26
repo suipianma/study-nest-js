@@ -1,39 +1,25 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { RetrievalService } from '../../knowledge-base/retrieval.service';
 import { AgentContext } from '../agent/agent-context.type';
-import { createKnowledgeBaseSearchTool } from './implementations/knowledge-base-search.tool';
 import { createWeatherTool } from './implementations/weather.tool';
 import { ToolDefinition } from './types/tool.type';
 
 @Injectable()
 export class ToolRegistryService implements OnModuleInit {
   private readonly tools = new Map<string, ToolDefinition>();
-  private agentContext: AgentContext = {
-    userId: 0,
-    role: 'user',
-    knowledgeBaseIds: [],
-  };
+  private agentContext: AgentContext | null = null;
 
-  constructor(
-    private readonly config: ConfigService,
-    private readonly retrievalService: RetrievalService,
-  ) {}
+  constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
     this.register(createWeatherTool(this.config));
-    this.register(
-      createKnowledgeBaseSearchTool(this.retrievalService, () =>
-        this.getAgentContext(),
-      ),
-    );
   }
 
-  setAgentContext(ctx: AgentContext): void {
-    this.agentContext = ctx;
+  setAgentContext(context: AgentContext): void {
+    this.agentContext = context;
   }
 
-  getAgentContext(): AgentContext {
+  getAgentContext(): AgentContext | null {
     return this.agentContext;
   }
 

@@ -1,0 +1,16 @@
+标题：Function Calling机制
+
+内容：
+系统支持 AI 工具调用能力。
+
+流程：
+1. LLM 判断是否需要调用工具
+2. 如果需要，返回 tool_call
+3. 后端执行对应工具函数
+4. 将结果返回给 LLM
+5. LLM 基于结果生成最终回答
+
+支持工具：
+- weather（天气查询）
+- database query（数据库查询）
+- RAG knowledge base（知识检索）

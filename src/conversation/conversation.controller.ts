@@ -28,12 +28,8 @@ import {
   tap,
 } from 'rxjs';
 import { PromptTemplateService } from '../ai/prompt-template.service';
-import { AiService } from '../ai/ai.service';
-import { AgentOrchestratorService } from '../ai/agent/agent-orchestrator.service';
-import { AgentRouterService } from '../ai/agent/agent-router.service';
+import { ToolOrchestratorService } from '../ai/tools/tool-orchestrator.service';
 import { resolveModelReply } from '../ai/utils/reply.util';
-import { RetrievalService } from '../knowledge-base/retrieval.service';
-import { RagCitation, RagChunk } from '../knowledge-base/types/rag.type';
 import { ConversationService } from './conversation.service';
 import { ContextBuilderService } from './context-builder.service';
 import { SummaryService } from './summary.service';
@@ -57,11 +53,7 @@ interface StreamPayload {
   fromCache?: boolean;
   promptTokens?: number;
   completionTokens?: number;
-  phase?: 'agent_start' | 'agent_step' | 'agent_done' | 'tool_call' | 'tool_result' | 'rag_retrieval';
-  step?: number;
-  maxSteps?: number;
-  steps?: number;
-  citations?: RagCitation[];
+  phase?: 'tool_call' | 'tool_result';
   tool?: string;
   args?: Record<string, string>;
   result?: string;
@@ -78,10 +70,7 @@ export class ConversationController {
     private readonly summaryService: SummaryService,
     private readonly titleService: TitleService,
     private readonly promptTemplateService: PromptTemplateService,
-    private readonly aiService: AiService,
-    private readonly agentRouter: AgentRouterService,
-    private readonly agentOrchestrator: AgentOrchestratorService,
-    private readonly retrievalService: RetrievalService,
+    private readonly toolOrchestrator: ToolOrchestratorService,
   ) {}
 
   @Get()
@@ -120,13 +109,6 @@ export class ConversationController {
     );
   }
 
-  @Delete('all')
-  @UseGuards(AuthGuard('jwt'))
-  @ApiOperation({ summary: '删除全部会话' })
-  removeAll(@Req() req: Request & { user: JwtPayload }) {
-    return this.conversationService.removeAllByUser(req.user.userId);
-  }
-
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'))
   @ApiOperation({ summary: '删除会话' })
@@ -157,8 +139,6 @@ export class ConversationController {
     @Param('id') id: string,
     @Query('content') content: string,
     @Query('promptId') promptId: string | undefined,
-    @Query('knowledgeBaseIds') knowledgeBaseIds: string | undefined,
-    @Query('regenerate') regenerate: string | undefined,
     @Req() req: Request & { user: JwtPayload },
   ): Observable<MessageEvent> {
     if (!content?.trim()) {
@@ -168,20 +148,10 @@ export class ConversationController {
     const conversationId = +id;
     const userId = req.user.userId;
     const trimmedContent = content.trim();
-    const kbIds = this.parseKnowledgeBaseIds(knowledgeBaseIds);
-    const isRegenerate = regenerate === '1' || regenerate === 'true';
 
     return defer(() =>
       from(
-        this.prepareStream(
-          conversationId,
-          userId,
-          req.user.role,
-          trimmedContent,
-          promptId,
-          kbIds,
-          isRegenerate,
-        ),
+        this.prepareStream(conversationId, userId, trimmedContent, promptId),
       ),
     ).pipe(switchMap((obs) => obs));
   }
@@ -190,78 +160,16 @@ export class ConversationController {
   private async prepareStream(
     conversationId: number,
     userId: number,
-    role: string,
     content: string,
     promptId?: string,
-    knowledgeBaseIds: number[] = [],
-    isRegenerate = false,
   ): Promise<Observable<MessageEvent>> {
     await this.conversationService.findOneOrFail(conversationId, userId);
+    await this.conversationService.assertMessageLimit(conversationId);
 
-    let messagesBefore = await this.conversationService.getMessages(
+    const messagesBefore = await this.conversationService.getMessages(
       conversationId,
       userId,
     );
-
-    let messageContent = content;
-    let ragQuery = content;
-
-    if (isRegenerate) {
-      const last = messagesBefore[messagesBefore.length - 1];
-      if (last?.role === 'assistant') {
-        await this.conversationService.deleteMessage(
-          conversationId,
-          userId,
-          last.id,
-        );
-        messagesBefore = messagesBefore.slice(0, -1);
-      } else if (!last || last.role !== 'user') {
-        throw new BadRequestException('当前无法重新生成');
-      }
-
-      const lastUser = messagesBefore[messagesBefore.length - 1];
-      if (!lastUser || lastUser.role !== 'user') {
-        throw new BadRequestException('找不到对应的用户消息');
-      }
-
-      const trimmedInput = content.trim();
-      messageContent =
-        trimmedInput && trimmedInput !== lastUser.content
-          ? trimmedInput
-          : lastUser.content;
-      ragQuery = messageContent;
-
-      if (messageContent !== lastUser.content) {
-        await this.conversationService.updateUserMessageContent(
-          conversationId,
-          userId,
-          lastUser.id,
-          messageContent,
-        );
-      }
-    } else {
-      await this.conversationService.assertMessageLimit(conversationId);
-    }
-
-    let ragChunks: RagChunk[] = [];
-    let ragEnabled = knowledgeBaseIds.length > 0;
-    let ragUnavailable = false;
-    let citations: RagCitation[] = [];
-
-    if (ragEnabled) {
-      try {
-        ragChunks = await this.retrievalService.search(ragQuery, knowledgeBaseIds, {
-          userId,
-          role,
-        });
-        citations = this.retrievalService.toCitations(ragChunks);
-      } catch {
-        ragChunks = [];
-        citations = [];
-        ragUnavailable = true;
-      }
-    }
-
     const assistantCountBefore = messagesBefore.filter(
       (m) => m.role === 'assistant',
     ).length;
@@ -269,33 +177,32 @@ export class ConversationController {
       (m) => m.role === 'user',
     ).length;
 
+    let messageContent = content;
     const trimmedPromptId = promptId?.trim();
     const usePrompt = Boolean(trimmedPromptId);
 
-    if (!isRegenerate) {
-      if (usePrompt) {
-        const template = this.promptTemplateService.findById(trimmedPromptId!);
-        if (!template) throw new BadRequestException('模板不存在');
-        // 仅首条消息格式化存库，便于展示 Context
-        if (userCountBefore === 0) {
-          await this.conversationService.bindPromptTemplate(
-            conversationId,
-            template.id,
-          );
-          messageContent = this.promptTemplateService.formatUserMessage(
-            template,
-            content,
-          );
-        }
+    if (usePrompt) {
+      const template = this.promptTemplateService.findById(trimmedPromptId!);
+      if (!template) throw new BadRequestException('模板不存在');
+      // 仅首条消息格式化存库，便于展示 Context
+      if (userCountBefore === 0) {
+        await this.conversationService.bindPromptTemplate(
+          conversationId,
+          template.id,
+        );
+        messageContent = this.promptTemplateService.formatUserMessage(
+          template,
+          content,
+        );
       }
-      await this.conversationService.createUserMessage(
-        conversationId,
-        messageContent,
-      );
     }
+    await this.conversationService.createUserMessage(
+      conversationId,
+      messageContent,
+    );
 
     // 首条用户消息 → 截断更新标题
-    if (!isRegenerate && userCountBefore === 0) {
+    if (userCountBefore === 0) {
       await this.conversationService.updateTitleDirect(
         conversationId,
         this.titleService.truncateTitle(messageContent),
@@ -331,9 +238,6 @@ export class ConversationController {
     const ollamaMessages = this.contextBuilder.build(conversation, messages, {
       injectPrompt: usePrompt,
       promptId: trimmedPromptId,
-      ragChunks,
-      ragEnabled,
-      ragUnavailable,
     });
     const isFirstAiReply = assistantCountBefore === 0;
 
@@ -344,18 +248,9 @@ export class ConversationController {
     let completionTokens: number | undefined;
     let finishedNormally = false;
 
-    const routeMode = await this.agentRouter.route(content);
-
-    const aiStream =
-      routeMode === 'direct'
-        ? this.aiService.streamChat(ollamaMessages, conversation.summary)
-        : this.agentOrchestrator.streamWithAgent(
-            ollamaMessages,
-            conversation.summary,
-            { userId, role, knowledgeBaseIds },
-          );
-
-    const pipedStream = aiStream.pipe(
+    return this.toolOrchestrator
+      .streamWithTools(ollamaMessages, conversation.summary)
+      .pipe(
         tap((event) => {
           const payload = this.parseStreamPayload(event.data);
           if (payload.thinkingDelta) thinking += payload.thinkingDelta;
@@ -399,25 +294,6 @@ export class ConversationController {
           });
         }),
       );
-
-    return new Observable((subscriber) => {
-      if (ragEnabled) {
-        subscriber.next({
-          data: {
-            phase: 'rag_retrieval',
-            citations,
-          } satisfies StreamPayload,
-        } as MessageEvent);
-      }
-
-      const sub = pipedStream.subscribe({
-        next: (event) => subscriber.next(event),
-        error: (error) => subscriber.error(error),
-        complete: () => subscriber.complete(),
-      });
-
-      return () => sub.unsubscribe();
-    });
   }
 
   /** 流结束后写入 assistant 消息并触发后续异步任务 */
@@ -502,14 +378,5 @@ export class ConversationController {
     }
 
     return {};
-  }
-
-  private parseKnowledgeBaseIds(value?: string): number[] {
-    if (!value?.trim()) return [];
-    const ids = value
-      .split(',')
-      .map((item) => Number(item.trim()))
-      .filter((id) => Number.isInteger(id) && id > 0);
-    return [...new Set(ids)];
   }
 }

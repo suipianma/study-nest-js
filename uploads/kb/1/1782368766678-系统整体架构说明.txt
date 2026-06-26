@@ -1,0 +1,26 @@
+标题：系统架构
+
+内容：
+系统由三层组成：
+
+前端层：
+- Next.js Admin Web
+- Chat UI
+- Prompt选择器
+
+后端层：
+- NestJS API
+- WebSocket Chat
+- AI Orchestrator
+- RAG Service
+- Agent Service
+
+数据层：
+- MySQL（业务数据）
+- Redis（缓存/会话）
+- Vector Store（知识向量）
+
+AI层：
+- Ollama本地模型
+- Function Calling
+- RAG增强

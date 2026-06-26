@@ -14,18 +14,6 @@
 Git、Node 20+、pnpm、Docker Desktop、Ollama  
 `ollama pull deepseek-r1:1.5b`
 
-RAG 知识库还需：
-
-- **Qdrant** 向量库（随 `pnpm run docker:infra` 启动）：http://localhost:6333  
-- **Embedding 模型**（Ollama）：`ollama pull nomic-embed-text`
-
-`.env.dev` 中可配置（后续 RAG 模块会读取）：
-
-| 变量 | 说明 | 示例 |
-|------|------|------|
-| `QDRANT_URL` | Qdrant HTTP 地址 | `http://localhost:6333` |
-| `OLLAMA_EMBED_MODEL` | Ollama embedding 模型名 | `nomic-embed-text` |
-
 ---
 
 ## 2. 本地目录（兄弟文件夹）
@@ -157,28 +145,3 @@ git push origin main
 | `docker-compose.yml`（infra） | |
 
 更多环境说明见 **环境.md**、**deploy/README.md**。
-
----
-
-## 9. MCP Filesystem（Agent 集成）
-
-Agent 模块通过 MCP（Model Context Protocol）读取本地文件，供 LLM 工具调用。
-
-**要求**
-
-- Node.js **18+**（与项目其余部分一致，推荐 Node 20+）
-
-**运行方式**
-
-- 应用启动时会自动通过 stdio 拉起 `npx @modelcontextprotocol/server-filesystem`，无需单独安装或手动启动 MCP 服务。
-
-**环境变量**（`.env.dev`）
-
-| 变量 | 说明 | 示例 |
-|------|------|------|
-| `MCP_FILESYSTEM_ENABLED` | 是否启用 filesystem MCP | `true` |
-| `MCP_FILESYSTEM_ROOTS` | 只读白名单目录，逗号分隔，路径相对 `study-nest-js` 工作目录 | `../docs,./uploads/kb` |
-
-- `MCP_FILESYSTEM_ROOTS` 为**只读**白名单：MCP 仅能访问列出的目录及其子路径。
-- 仓库根目录的设计文档在 `../docs`；知识库上传文件在 `./uploads/kb`。
-- 本地不需要 MCP 时，设置 `MCP_FILESYSTEM_ENABLED=false` 即可禁用。

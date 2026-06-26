@@ -1,5 +1,5 @@
 # 用法见 环境.md
-# - 本地开发：docker compose up -d mysql redis qdrant
+# - 本地开发：docker compose up -d mysql redis
 # - Docker 全栈：docker compose --profile full up -d --build
 
 services:
@@ -38,15 +38,6 @@ services:
     volumes:
       - redis_data:/data
 
-  qdrant:
-    image: qdrant/qdrant:latest
-    restart: unless-stopped
-    ports:
-      - "6333:6333"
-    volumes:
-      - qdrant_data:/qdrant/storage
-
 volumes:
   mysql_data:
   redis_data:
-  qdrant_data:
