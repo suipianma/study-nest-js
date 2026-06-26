@@ -3,8 +3,9 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
-  HttpException,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -19,23 +20,18 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import {
   Observable,
-  catchError,
   defer,
-  finalize,
   from,
-  of,
   switchMap,
-  tap,
 } from 'rxjs';
 import { PromptTemplateService } from '../ai/prompt-template.service';
-import { ToolOrchestratorService } from '../ai/tools/tool-orchestrator.service';
 import { ToolRegistryService } from '../ai/tools/tool-registry.service';
-import { resolveModelReply } from '../ai/utils/reply.util';
-import { ContentModerationService } from '../security/content-moderation.service';
 import { PromptGuardService } from '../security/prompt-guard.service';
 import { ContextComposerService } from '../context-engine/context-composer.service';
 import { ContextEngineService } from '../context-engine/context-engine.service';
+import { ConversationStreamService } from './conversation-stream.service';
 import { ConversationService } from './conversation.service';
+import { StreamSessionService } from './stream-session.service';
 import { SummaryService } from './summary.service';
 import { TitleService } from './title.service';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
@@ -48,36 +44,20 @@ interface JwtPayload {
   role: string;
 }
 
-interface StreamPayload {
-  thinking?: string;
-  response?: string;
-  thinkingDelta?: string;
-  contentDelta?: string;
-  done?: boolean;
-  fromCache?: boolean;
-  promptTokens?: number;
-  completionTokens?: number;
-  phase?: 'tool_call' | 'tool_result';
-  tool?: string;
-  args?: Record<string, string>;
-  result?: string;
-  error?: string;
-}
-
 @Controller('conversations')
 @ApiTags('会话模块')
 @ApiBearerAuth()
 export class ConversationController {
   constructor(
     private readonly conversationService: ConversationService,
+    private readonly conversationStreamService: ConversationStreamService,
+    private readonly streamSessionService: StreamSessionService,
     private readonly contextEngine: ContextEngineService,
     private readonly contextComposer: ContextComposerService,
     private readonly summaryService: SummaryService,
     private readonly titleService: TitleService,
     private readonly promptTemplateService: PromptTemplateService,
-    private readonly toolOrchestrator: ToolOrchestratorService,
     private readonly promptGuard: PromptGuardService,
-    private readonly contentModeration: ContentModerationService,
     private readonly toolRegistry: ToolRegistryService,
   ) {}
 
@@ -117,6 +97,16 @@ export class ConversationController {
     );
   }
 
+  @Delete('all')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({ summary: '删除当前用户全部会话' })
+  async removeAll(@Req() req: Request & { user: JwtPayload }) {
+    const deleted = await this.conversationService.removeAllByUser(
+      req.user.userId,
+    );
+    return { deleted };
+  }
+
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'))
   @ApiOperation({ summary: '删除会话' })
@@ -139,23 +129,73 @@ export class ConversationController {
     });
   }
 
+  @Get(':id/stream/active')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({ summary: '获取当前会话进行中的流式任务快照' })
+  async getActiveStream(
+    @Param('id') id: string,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    const conversationId = +id;
+    await this.conversationService.findOneOrFail(conversationId, req.user.userId);
+    const session = await this.streamSessionService.getActiveSession(
+      conversationId,
+      req.user.userId,
+    );
+    if (!session) {
+      return null;
+    }
+    return this.conversationStreamService.toPublicSnapshot(session);
+  }
+
+  @Delete(':id/stream')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({ summary: '停止当前进行中的流式生成' })
+  async cancelStream(
+    @Param('id') id: string,
+    @Query('streamId') streamId: string | undefined,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    const resumeStreamId = streamId?.trim();
+    if (!resumeStreamId) {
+      throw new BadRequestException('streamId 不能为空');
+    }
+    await this.conversationStreamService.cancelGeneration(
+      resumeStreamId,
+      +id,
+      req.user.userId,
+    );
+    return { ok: true };
+  }
+
   @Sse(':id/stream')
   @SkipThrottle()
   @UseGuards(JwtQueryGuard, AuthGuard('jwt'))
-  @ApiOperation({ summary: '流式发送消息并获取 AI 回复' })
+  @ApiOperation({ summary: '流式发送消息并获取 AI 回复（支持 streamId 续传）' })
   stream(
     @Param('id') id: string,
-    @Query('content') content: string,
+    @Query('content') content: string | undefined,
+    @Query('streamId') streamId: string | undefined,
     @Query('promptId') promptId: string | undefined,
     @Query('knowledgeBaseIds') knowledgeBaseIdsRaw: string | string[] | undefined,
+    @Query('regenerate') regenerateRaw: string | undefined,
     @Req() req: Request & { user: JwtPayload },
   ): Observable<MessageEvent> {
+    const conversationId = +id;
+    const userId = req.user.userId;
+    const resumeStreamId = streamId?.trim();
+    const isRegenerate = regenerateRaw === '1' || regenerateRaw === 'true';
+
+    if (resumeStreamId) {
+      return defer(() =>
+        from(this.attachStream(conversationId, userId, resumeStreamId)),
+      ).pipe(switchMap((obs) => obs));
+    }
+
     if (!content?.trim()) {
       throw new BadRequestException('消息内容不能为空');
     }
 
-    const conversationId = +id;
-    const userId = req.user.userId;
     const knowledgeBaseIds = this.parseKnowledgeBaseIds(knowledgeBaseIdsRaw);
     const validation = this.promptGuard.validateUserInput(
       content.trim(),
@@ -174,9 +214,29 @@ export class ConversationController {
           promptId,
           knowledgeBaseIds,
           req.user,
+          isRegenerate,
         ),
       ),
     ).pipe(switchMap((obs) => obs));
+  }
+
+  private async attachStream(
+    conversationId: number,
+    userId: number,
+    streamId: string,
+  ): Promise<Observable<MessageEvent>> {
+    const session = await this.streamSessionService.getSession(streamId);
+    if (!session) {
+      throw new NotFoundException('流会话不存在或已过期');
+    }
+    if (session.conversationId !== conversationId || session.userId !== userId) {
+      throw new ForbiddenException('无权访问该流会话');
+    }
+    return this.conversationStreamService.observeSession(
+      streamId,
+      conversationId,
+      userId,
+    );
   }
 
   /** 流式发送编排：写消息 → 组装上下文 → 流式回复 → 持久化 */
@@ -187,11 +247,12 @@ export class ConversationController {
     promptId?: string,
     knowledgeBaseIds?: number[],
     currentUser?: JwtPayload,
+    isRegenerate = false,
   ): Promise<Observable<MessageEvent>> {
     await this.conversationService.findOneOrFail(conversationId, userId);
     await this.conversationService.assertMessageLimit(conversationId);
 
-    const messagesBefore = await this.conversationService.getMessages(
+    let messagesBefore = await this.conversationService.getMessages(
       conversationId,
       userId,
     );
@@ -206,32 +267,64 @@ export class ConversationController {
     const trimmedPromptId = promptId?.trim();
     const usePrompt = Boolean(trimmedPromptId);
 
-    if (usePrompt) {
-      const template = this.promptTemplateService.findById(trimmedPromptId!);
-      if (!template) throw new BadRequestException('模板不存在');
-      // 仅首条消息格式化存库，便于展示 Context
-      if (userCountBefore === 0) {
-        await this.conversationService.bindPromptTemplate(
+    if (isRegenerate) {
+      const last = messagesBefore[messagesBefore.length - 1];
+      if (last?.role === 'assistant') {
+        await this.conversationService.deleteMessage(
           conversationId,
-          template.id,
+          userId,
+          last.id,
         );
-        messageContent = this.promptTemplateService.formatUserMessage(
-          template,
-          content,
+        messagesBefore = messagesBefore.slice(0, -1);
+      } else if (!last || last.role !== 'user') {
+        throw new BadRequestException('当前无法重新生成');
+      }
+
+      const lastUser = messagesBefore[messagesBefore.length - 1];
+      if (!lastUser || lastUser.role !== 'user') {
+        throw new BadRequestException('找不到对应的用户消息');
+      }
+
+      const trimmedInput = content.trim();
+      messageContent =
+        trimmedInput && trimmedInput !== lastUser.content
+          ? trimmedInput
+          : lastUser.content;
+
+      if (messageContent !== lastUser.content) {
+        await this.conversationService.updateUserMessageContent(
+          conversationId,
+          userId,
+          lastUser.id,
+          messageContent,
         );
       }
-    }
-    await this.conversationService.createUserMessage(
-      conversationId,
-      messageContent,
-    );
-
-    // 首条用户消息 → 截断更新标题
-    if (userCountBefore === 0) {
-      await this.conversationService.updateTitleDirect(
+    } else {
+      if (usePrompt) {
+        const template = this.promptTemplateService.findById(trimmedPromptId!);
+        if (!template) throw new BadRequestException('模板不存在');
+        if (userCountBefore === 0) {
+          await this.conversationService.bindPromptTemplate(
+            conversationId,
+            template.id,
+          );
+          messageContent = this.promptTemplateService.formatUserMessage(
+            template,
+            content,
+          );
+        }
+      }
+      await this.conversationService.createUserMessage(
         conversationId,
-        this.titleService.truncateTitle(messageContent),
+        messageContent,
       );
+
+      if (userCountBefore === 0) {
+        await this.conversationService.updateTitleDirect(
+          conversationId,
+          this.titleService.truncateTitle(messageContent),
+        );
+      }
     }
 
     let conversation = await this.conversationService.findOneOrFail(
@@ -269,159 +362,31 @@ export class ConversationController {
         : undefined,
     });
     const ollamaMessages = this.contextComposer.compose(contextPlan);
-    const isFirstAiReply = assistantCountBefore === 0;
+    const isFirstAiReply =
+      messages.filter((m) => m.role === 'assistant').length === 0;
 
-    let thinking = '';
-    let response = '';
-    let fromCache = false;
-    let promptTokens: number | undefined;
-    let completionTokens: number | undefined;
-    let finishedNormally = false;
-    let endedByError = false;
-
-    return this.toolOrchestrator
-      .streamWithTools(ollamaMessages, conversation.summary, contextPlan)
-      .pipe(
-        tap((event) => {
-          const payload = this.parseStreamPayload(event.data);
-          if (payload.thinkingDelta) thinking += payload.thinkingDelta;
-          if (payload.contentDelta) response += payload.contentDelta;
-          if (payload.thinking !== undefined) thinking = payload.thinking;
-          if (payload.response !== undefined) response = payload.response;
-          if (payload.fromCache) fromCache = true;
-          if (payload.promptTokens != null) promptTokens = payload.promptTokens;
-          if (payload.completionTokens != null) {
-            completionTokens = payload.completionTokens;
-          }
-          if (payload.done) finishedNormally = true;
-        }),
-        catchError((err: unknown) => {
-          endedByError = true;
-          const message = this.extractStreamErrorMessage(err);
-          return of({
-            data: {
-              error: message,
-              done: true,
-            },
-          } as MessageEvent);
-        }),
-        finalize(() => {
-          const resolved = resolveModelReply(thinking, response);
-          const hasMeaningfulModelOutput = Boolean(
-            resolved.response.trim() || resolved.thinking.trim(),
-          );
-
-          // 纯系统异常且无模型输出时，不写入无意义 assistant 消息
-          if (endedByError && !hasMeaningfulModelOutput) {
-            return;
-          }
-
-          let finalContent = finishedNormally
-            ? resolved.response
-            : resolved.response
-              ? `${resolved.response}[回复中断]`
-              : '[回复中断]';
-
-          const moderated = this.contentModeration.moderate(finalContent);
-          finalContent = moderated.text;
-
-          // 异步持久化，不阻塞 SSE 关闭
-          void this.persistAssistantReply({
-            conversationId,
-            messageContent,
-            finalContent,
-            thinking: resolved.thinking,
-            fromCache,
-            promptTokens,
-            completionTokens,
-            isFirstAiReply,
-          });
-        }),
-      );
-  }
-
-  /** 流结束后写入 assistant 消息并触发后续异步任务 */
-  private async persistAssistantReply(options: {
-    conversationId: number;
-    messageContent: string;
-    finalContent: string;
-    thinking: string;
-    fromCache: boolean;
-    promptTokens?: number;
-    completionTokens?: number;
-    isFirstAiReply: boolean;
-  }): Promise<void> {
-    const {
+    const session = await this.streamSessionService.createSession({
       conversationId,
-      messageContent,
-      finalContent,
-      thinking,
-      fromCache,
-      promptTokens,
-      completionTokens,
+      userId,
+      userMessageContent: messageContent,
       isFirstAiReply,
-    } = options;
+    });
 
-    try {
-      await this.conversationService.createAssistantMessage(conversationId, {
-        content: finalContent,
-        thinking: thinking || undefined,
-        fromCache,
-        promptTokens: fromCache ? 0 : promptTokens,
-        completionTokens: fromCache ? 0 : completionTokens,
-      });
-      await this.conversationService.touchUpdatedAt(conversationId);
+    this.conversationStreamService.startDetachedGeneration({
+      streamId: session.streamId,
+      conversationId,
+      userMessageContent: messageContent,
+      isFirstAiReply,
+      contextPlan,
+      ollamaMessages,
+      summary: conversation.summary,
+    });
 
-      // 首条 AI 回复后异步优化标题
-      if (isFirstAiReply && finalContent && !finalContent.endsWith('[回复中断]')) {
-        setImmediate(() => {
-          void this.titleService.refineTitle(
-            conversationId,
-            messageContent,
-            finalContent,
-          );
-        });
-      }
-
-      // 异步增量摘要
-      this.summaryService.scheduleSummaryUpdate(conversationId);
-    } catch {
-      // 持久化失败不影响已结束的 SSE 流
-    }
-  }
-
-  /** 将流式异常转为 SSE error 事件，避免前端只看到「连接中断」 */
-  private extractStreamErrorMessage(err: unknown): string {
-    if (err instanceof HttpException) {
-      const body = err.getResponse();
-      if (typeof body === 'string') return body;
-      if (body && typeof body === 'object' && 'message' in body) {
-        const message = (body as { message?: string | string[] }).message;
-        if (Array.isArray(message)) return message.join('，');
-        if (typeof message === 'string' && message.trim()) return message;
-      }
-      return err.message;
-    }
-    if (err instanceof Error && err.message.trim()) {
-      return err.message;
-    }
-    return 'AI 服务异常，请稍后重试';
-  }
-
-  private parseStreamPayload(data: unknown): StreamPayload {
-    if (typeof data === 'string') {
-      try {
-        return JSON.parse(data) as StreamPayload;
-      } catch {
-        return { response: data };
-      }
-    }
-
-    if (data && typeof data === 'object') {
-      return data as StreamPayload;
-    }
-
-    return {};
+    return this.conversationStreamService.observeSession(
+      session.streamId,
+      conversationId,
+      userId,
+    );
   }
 
   private parseKnowledgeBaseIds(

@@ -69,6 +69,50 @@ export class ConversationService {
     return this.prisma.conversation.delete({ where: { id } });
   }
 
+  /** 删除当前用户全部会话 */
+  async removeAllByUser(userId: number): Promise<number> {
+    const result = await this.prisma.conversation.deleteMany({
+      where: { userId },
+    });
+    return result.count;
+  }
+
+  /** 删除单条消息（重新生成时移除 assistant 回复） */
+  async deleteMessage(
+    conversationId: number,
+    userId: number,
+    messageId: number,
+  ): Promise<void> {
+    await this.findOneOrFail(conversationId, userId);
+    const msg = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId },
+    });
+    if (!msg) {
+      throw new NotFoundException('消息不存在');
+    }
+    await this.prisma.message.delete({ where: { id: messageId } });
+  }
+
+  /** 重新生成时更新最后一条用户消息内容 */
+  async updateUserMessageContent(
+    conversationId: number,
+    userId: number,
+    messageId: number,
+    content: string,
+  ): Promise<Message> {
+    await this.findOneOrFail(conversationId, userId);
+    const msg = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId, role: 'user' },
+    });
+    if (!msg) {
+      throw new NotFoundException('用户消息不存在');
+    }
+    return this.prisma.message.update({
+      where: { id: messageId },
+      data: { content },
+    });
+  }
+
   /** 获取会话，不存在 404，非本人 403 */
   async findOneOrFail(id: number, userId: number): Promise<Conversation> {
     const conversation = await this.prisma.conversation.findUnique({

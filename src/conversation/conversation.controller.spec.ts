@@ -1,19 +1,18 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Conversation, Message } from '@prisma/client';
-import { lastValueFrom, Observable, of, throwError } from 'rxjs';
+import { lastValueFrom, Observable, of } from 'rxjs';
 import { PromptTemplateService } from '../ai/prompt-template.service';
-import { ToolOrchestratorService } from '../ai/tools/tool-orchestrator.service';
 import { ToolRegistryService } from '../ai/tools/tool-registry.service';
 import { ChatMessage } from '../ai/types/chat-message.type';
 import { ContextComposerService } from '../context-engine/context-composer.service';
 import { ContextEngineService } from '../context-engine/context-engine.service';
 import { ContextPlan } from '../context-engine/types/context-plan.type';
-import { ContentModerationService } from '../security/content-moderation.service';
 import { PromptGuardService } from '../security/prompt-guard.service';
-import { ContextBuilderService } from './context-builder.service';
+import { ConversationStreamService } from './conversation-stream.service';
 import { ConversationController } from './conversation.controller';
 import { ConversationService } from './conversation.service';
+import { StreamSessionService } from './stream-session.service';
 import { SummaryService } from './summary.service';
 import { TitleService } from './title.service';
 
@@ -114,11 +113,6 @@ describe('ConversationController prepareStream context integration', () => {
     touchUpdatedAt: jest.fn().mockResolvedValue(undefined),
     bindPromptTemplate: jest.fn().mockResolvedValue(undefined),
   };
-  const contextBuilder = {
-    build: jest.fn(() => {
-      throw new Error('legacy ContextBuilderService should not be used');
-    }),
-  };
   const contextEngine = {
     buildPlan: jest.fn().mockResolvedValue(contextPlan),
   };
@@ -138,19 +132,34 @@ describe('ConversationController prepareStream context integration', () => {
     findById: jest.fn().mockReturnValue({ id: 'tpl-1' }),
     formatUserMessage: jest.fn().mockImplementation((_tpl, value) => value),
   };
-  const toolOrchestrator = {
-    streamWithTools: jest
+  const streamSessionService = {
+    createSession: jest.fn().mockResolvedValue({
+      streamId: 'stream-1',
+      conversationId: 1,
+      userId: 100,
+      status: 'generating',
+      thinking: '',
+      response: '',
+      seq: 0,
+      fromCache: false,
+      userMessageContent: 'new question',
+      isFirstAiReply: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  };
+  const conversationStreamService = {
+    startDetachedGeneration: jest.fn(),
+    observeSession: jest
       .fn()
-      .mockReturnValue(of({ data: { response: 'ok', done: true } })),
-  };
-  const promptGuard = {
-    validateUserInput: jest.fn((value: string) => ({ ok: true, sanitized: value })),
-  };
-  const contentModeration = {
-    moderate: jest.fn((text: string) => ({ text })),
+      .mockReturnValue(of({ data: { response: 'ok', done: true, streamId: 'stream-1', seq: 1 } })),
   };
   const toolRegistry = {
     getKnownToolNames: jest.fn().mockReturnValue([]),
+  };
+
+  const promptGuard = {
+    validateUserInput: jest.fn((value: string) => ({ ok: true, sanitized: value })),
   };
 
   beforeEach(async () => {
@@ -163,11 +172,10 @@ describe('ConversationController prepareStream context integration', () => {
         { provide: SummaryService, useValue: summaryService },
         { provide: TitleService, useValue: titleService },
         { provide: PromptTemplateService, useValue: promptTemplateService },
-        { provide: ToolOrchestratorService, useValue: toolOrchestrator },
+        { provide: StreamSessionService, useValue: streamSessionService },
+        { provide: ConversationStreamService, useValue: conversationStreamService },
         { provide: PromptGuardService, useValue: promptGuard },
-        { provide: ContentModerationService, useValue: contentModeration },
         { provide: ToolRegistryService, useValue: toolRegistry },
-        { provide: ContextBuilderService, useValue: contextBuilder },
       ],
     }).compile();
 
@@ -208,17 +216,18 @@ describe('ConversationController prepareStream context integration', () => {
     };
     expect(buildPlanOptions.currentUserMessage).toBeUndefined();
     expect(contextComposer.compose).toHaveBeenCalledWith(contextPlan);
-    expect(contextBuilder.build).not.toHaveBeenCalled();
-    expect(toolOrchestrator.streamWithTools).toHaveBeenCalledWith(
-      composedMessages,
-      conversation.summary,
-      contextPlan,
+    expect(streamSessionService.createSession).toHaveBeenCalled();
+    expect(conversationStreamService.startDetachedGeneration).toHaveBeenCalled();
+    expect(conversationStreamService.observeSession).toHaveBeenCalledWith(
+      'stream-1',
+      1,
+      100,
     );
   });
 
-  it('should emit error event and skip assistant persistence when stream errors without model output', async () => {
-    toolOrchestrator.streamWithTools.mockReturnValueOnce(
-      throwError(() => new Error('stream failed')),
+  it('should emit error event from observed stream session', async () => {
+    conversationStreamService.observeSession.mockReturnValueOnce(
+      of({ data: { error: 'stream failed', done: true } }),
     );
 
     const stream$ = await (
@@ -237,9 +246,6 @@ describe('ConversationController prepareStream context integration', () => {
       error: 'stream failed',
       done: true,
     });
-
-    expect(conversationService.createAssistantMessage).not.toHaveBeenCalled();
-    expect(conversationService.touchUpdatedAt).not.toHaveBeenCalled();
   });
 
   it('should pass parsed knowledgeBaseIds into context planning on stream path', async () => {
