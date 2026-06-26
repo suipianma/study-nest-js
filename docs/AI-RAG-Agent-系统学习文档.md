@@ -200,10 +200,27 @@ SSE 像餐厅叫号屏，后厨不断把最新进度推给顾客，顾客不用�
 - 历史消息加载。
 - regenerate 重新生成。
 - message limit 限制。
+- 消息分页。
+- 进行中流式任务查询。
+- 取消生成。
+- token 消耗统计。
 
 为什么需要：
 
 AI Chat 不是一次性请求，而是多轮对话。没有会话系统，模型无法理解上下文，用户也无法回看历史。
+
+当前项目已有的会话增强 API：
+
+- `GET /conversations/:id/messages`：分页获取会话消息。
+- `GET /conversations/:id/stream/active`：获取当前会话进行中的流式任务快照。
+- `DELETE /conversations/:id/stream?streamId=...`：停止当前流式生成。
+- `GET /conversations/stats/token-usage`：获取当前用户 token 消耗统计。
+- `DELETE /conversations/all`：删除当前用户全部会话。
+- `GET /conversations/:id/stream?streamId=...`：通过 streamId 续传/观察已有流。
+
+SSE 鉴权说明：
+
+浏览器 `EventSource` 不方便自定义 Authorization header，所以项目提供 `JwtQueryGuard` 支持 query token 鉴权，同时仍配合 `AuthGuard('jwt')` 复用 JWT 用户上下文。
 
 生活类比：
 
@@ -665,6 +682,25 @@ AI 系统的输入不可信。用户输入、RAG 文档、工具返回结果都�
 
 图书馆里有公共书架、部门书架、个人保险柜。搜索前先判断你能进哪个区域。
 
+#### 4. 输出内容审核
+
+除了输入安全，AI 回复在落库前也需要做输出审核。
+
+当前项目已有基础版 `ContentModerationService`：
+
+- 命中高风险敏感词时，整段回复替换为安全提示。
+- 对中国大陆手机号做脱敏，例如 `138****1234`。
+- 对 18 位身份证号做脱敏。
+- 在 `ConversationStreamService` 最终保存 AI 回复前调用。
+
+为什么需要：
+
+AI 回复不是完全可信的，尤其在流式生成场景中，最终落库和展示前需要有一道兜底审核。当前实现是规则型基础审核，适合学习和演示；企业级系统后续可以接第三方内容安全 API 或更完整的审核策略。
+
+生活类比：
+
+内容审核像文章发布前的编辑校对，不是重写文章，而是拦截明显违规内容和保护隐私信息。
+
 ### 学习检查
 
 你需要能回答：
@@ -673,6 +709,7 @@ AI 系统的输入不可信。用户输入、RAG 文档、工具返回结果都�
 2. 为什么用户输入要被 wrap？
 3. 为什么工具调用不能只靠模型自觉？
 4. 知识库权限为什么要在检索前过滤？
+5. AI 输出为什么也要审核？
 
 ---
 
@@ -937,6 +974,31 @@ availableForContext = 6144
 
 RAG 文档和工具结果也可能包含恶意文本，不能让它们覆盖系统规则。
 
+#### 6. Memory 记忆系统
+
+当前项目已经有基础 Memory 能力，不再只是后续设想。
+
+已实现能力：
+
+- REST API：`POST /memories` 创建记忆，`GET /memories` 检索记忆，`DELETE /memories/:id` 遗忘记忆。
+- 数据权限：scope 为 `USER`、`CONVERSATION`、`GLOBAL`。
+- 普通用户只能创建自己的 `USER` 记忆，`GLOBAL` 记忆仅管理员可创建。
+- `ContextEngineService` 会根据当前用户问题调用 `ContextMemoryService.searchMemories()`。
+- 检索到的记忆会通过 `toContextBlocks()` 转成 `ContextBlock(type=memory)`。
+- 记忆检索异常时降级为空记忆，不中断主链路。
+
+当前边界：
+
+- Memory 是显式 API 创建，不是自动从对话中提取。
+- Memory 检索基于 MySQL `contains`，不是向量语义检索。
+- Memory 会进入 token budget，与历史消息、RAG、tool result 一起竞争上下文空间。
+
+面试讲法：
+
+```text
+这个项目的 Memory 是基础版长期/短期记忆能力。它通过 REST API 显式写入，按 USER、CONVERSATION、GLOBAL 做权限控制，在 ContextPlan 构建时按当前 query 检索并转成 memory block。自动提取和向量化记忆检索是后续优化方向。
+```
+
 ### 学习检查
 
 你需要能回答：
@@ -945,6 +1007,7 @@ RAG 文档和工具结果也可能包含恶意文本，不能让它们覆盖系�
 2. ContextBlock 的价值是什么？
 3. Token budget 为什么比固定消息条数更合理？
 4. RAG、Tool、Memory 为什么也要安全包裹？
+5. 当前 Memory 已实现什么，哪些还属于优化方向？
 
 ---
 
@@ -971,11 +1034,11 @@ Input -> Context -> Prompt -> RAG -> Tool -> Stream
 每个 Stage 只负责一类事情：
 
 - InputStage：校验、落库、摘要、会话准备。
-- ContextStage：构建基础 ContextPlan。
-- PromptStage：注入 Prompt 模板。
-- RagStage：检索知识库并注入 RAG blocks。
+- ContextStage：构建基础 ContextPlan，并通过 `skipPrompt/skipRag` 暂时跳过 Prompt 和 RAG。
+- PromptStage：构建 Prompt block 后通过 `enrichPlan()` 追加进 ContextPlan。
+- RagStage：检索知识库并通过 `enrichPlan()` 注入 RAG blocks。
 - ToolStage：拼接模型消息，判断 direct / agent。
-- StreamStage：创建流会话并启动生成。
+- StreamStage：创建流会话并通过 `startDetachedGeneration()` 启动后台生成。
 
 项目对应实现：
 
@@ -1020,6 +1083,29 @@ Stage 之间通过 PipelineContext 传递数据。
 为什么需要统一上下文对象：
 
 如果每个 Stage 直接调用其他 Stage 或共享全局变量，系统会变得难以测试和扩展。
+
+#### 4. 后台生成与 SSE 解耦
+
+当前流式生成不是简单地把模型流和 HTTP 连接强绑定。
+
+项目做法：
+
+- `StreamStage` 创建 Redis stream session。
+- `ConversationStreamService.startDetachedGeneration()` 在后台启动模型生成。
+- SSE 连接通过 `observeSession()` 观察 session。
+- 内存 `Subject` 负责实时推送。
+- Redis 快照负责刷新、断线和兜底轮询恢复。
+- 首帧/快照中会带 `streamId`，前端可用它做续传。
+
+为什么需要：
+
+用户刷新页面或网络断开时，后端生成不应该立刻丢失。后台生成和 SSE 观察解耦后，系统可以继续写 Redis，前端再通过 `streamId` 接上。
+
+#### 5. Isolation Policy Block
+
+`ContextEngineService` 会创建 `type=policy` 的系统隔离块，来源是 `PromptGuardService.getSystemIsolationPrompt()`，并设置 `mustKeep=true`。
+
+它的作用是把“系统安全边界”纳入 ContextPlan，而不是散落在某个 prompt 字符串里。这样无论后续注入 Prompt、RAG、tool result 还是 memory，都必须遵守同一套隔离规则。
 
 ### 学习检查
 
@@ -1163,7 +1249,7 @@ ToolStage 判断 executionMode = agent
 - RAG
 - Agent
 - MCP filesystem 示例
-- Memory
+- Memory 自动提取
 - 复杂 Prompt 模板
 
 原因：
@@ -1263,7 +1349,7 @@ ToolStage 判断 executionMode = agent
 - ContextPruningService。
 - ContextComposerService。
 - ContextTraceService。
-- Memory 可后置。
+- 基础 Memory：显式 API 创建、按 query 检索、进入 ContextPlan。
 
 验收标准：
 
@@ -1271,6 +1357,7 @@ ToolStage 判断 executionMode = agent
 - 超长历史能被裁剪。
 - summary / rag / prompt / message 有优先级。
 - trace 能解释上下文选择。
+- Memory 可通过 API 写入并在 ContextPlan 中出现。
 
 ---
 
@@ -2237,8 +2324,11 @@ Prompt RAG Agent：面向企业知识库的 AI 应用平台
 | 知识库检索预览引用 | 检索 API 返回 citations，前端详情页用 CitationBlock 展示 | `RetrievalService.toCitations()`、`CitationBlock` |
 | Agent ReAct | 支持 direct / agent 路由、最多 5 步工具循环、工具事件 SSE | `AgentRouterService`、`AgentOrchestratorService` |
 | searchKnowledgeBase 工具 | Agent 工具可检索用户已选知识库，返回 chunks 给模型推理 | `knowledge-base-search.tool.ts` |
-| Context Engine | 已有 ContextBlock、ContextPlan、token budget、pruning、composer、memory | `context-engine/*` |
+| Context Engine | 已有 ContextBlock、ContextPlan、token budget、pruning、composer、显式 Memory 集成 | `context-engine/*` |
+| Memory 记忆系统 | 支持 REST API 创建/检索/遗忘，scope 为 USER/CONVERSATION/GLOBAL，并可进入 ContextPlan | `ContextMemoryService`、`ContextMemoryController` |
 | Prompt 安全 | 用户/RAG/工具/Memory 内容有边界包裹和工具参数净化 | `PromptGuardService`、`ContextComposerService` |
+| 输出内容审核 | AI 回复落库前做敏感词拦截和手机号/身份证脱敏 | `ContentModerationService`、`ConversationStreamService` |
+| 流式控制 API | 支持查询 active stream、取消生成、streamId 续传、token 消耗统计 | `ConversationController`、`StreamSessionService` |
 | MCP filesystem 示例 | 可通过配置启用 filesystem MCP，并以 `mcp_` 前缀注册工具 | `McpClientService`、`McpToolBridgeService` |
 
 ## 面试中要说成优化方向
@@ -2251,15 +2341,16 @@ Prompt RAG Agent：面向企业知识库的 AI 应用平台
 | Agent 步骤持久化 | 当前 Agent 步骤通过 SSE 展示，未见独立落库表 | “Agent step 持久化可作为审计和回放优化。” |
 | 多企业系统 MCP | 当前接入的是 filesystem MCP 示例 | “MCP 可扩展到数据库、CRM、ERP，但当前项目只做 filesystem 示例。” |
 | LangGraph 工作流 | 当前是 NestJS 原生 ReAct 循环 | “LangGraph 是后续工作流编排方向，当前没有引入。” |
+| Memory 自动提取 / 向量检索 | 当前 Memory 是显式 API 创建 + MySQL contains 检索 | “基础 Memory 已接入 ContextPlan，自动提取和向量化检索是后续方向。” |
 
 ## 面试自检话术
 
 当面试官问“这个功能你们都做完了吗”，可以这样回答：
 
 ```text
-我会区分已落地和优化方向。当前项目已经落地的是 SSE 流式聊天、Prompt 模板、RAG 入库检索、混合召回、Agent ReAct、Context Engine 和 PromptGuard。
+我会区分已落地和优化方向。当前项目已经落地的是 SSE 流式聊天、Prompt 模板、RAG 入库检索、混合召回、Agent ReAct、Context Engine、基础 Memory、ContentModeration 和 PromptGuard。
 
-还有一些是我明确知道可以继续增强的点，比如聊天回答中的 citations 事件化展示、独立 rerank、Agent step 持久化、Stream Event Bus 和更多 MCP 企业连接器。这些我不会说成已经完成，而是作为下一阶段优化计划。
+还有一些是我明确知道可以继续增强的点，比如聊天回答中的 citations 事件化展示、独立 rerank、Agent step 持久化、Stream Event Bus、Memory 自动提取/向量检索和更多 MCP 企业连接器。这些我不会说成已经完成，而是作为下一阶段优化计划。
 ```
 
 ---

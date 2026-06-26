@@ -56,6 +56,12 @@ RAG 层支持文档上传、解析、分块、Ollama Embedding、Qdrant 向量�
 5. `RetrievalService` 做 RAG 混合检索：Qdrant 向量召回 + MySQL 关键词召回。
 6. `AgentOrchestratorService` 做多步 ReAct：判工具、执行工具、观察结果、最终回答。
 
+Orchestrator 最新实现细节：
+
+- `ContextStage` 先用 `skipPrompt/skipRag` 构建基础 ContextPlan。
+- `PromptStage` 和 `RagStage` 再通过 `enrichPlan()` 追加 Prompt block 和 RAG blocks。
+- `StreamStage` 通过 `startDetachedGeneration()` 启动后台生成，SSE 连接只负责观察 session。
+
 ---
 
 ## 4. 前端亮点怎么讲
@@ -83,6 +89,13 @@ RAG 层支持文档上传、解析、分块、Ollama Embedding、Qdrant 向量�
 ### 断线续传怎么讲
 
 后端用 `StreamSessionService` 在 Redis 中保存 stream session，包括 `streamId`、thinking、response、seq、status 等信息。前端拿到 `streamId` 后保存，连接中断时通过 `resumeStreamId` 继续观察原来的流会话。
+
+流式控制 API：
+
+- `GET /conversations/:id/stream/active`：查询进行中流式任务。
+- `DELETE /conversations/:id/stream?streamId=...`：取消生成。
+- `GET /conversations/:id/stream?streamId=...`：通过 streamId 续传。
+- `GET /conversations/stats/token-usage`：查看 token 消耗统计。
 
 ---
 
@@ -225,6 +238,23 @@ chunks: documentName / page / content / score
 Context Engine 的价值是把不同来源的上下文统一治理，按优先级和 token budget 选择内容，避免长对话超 token，也能解释本轮为什么用了这些上下文。
 ```
 
+### Memory 怎么讲
+
+当前项目的 Memory 是基础版已实现能力：
+
+- 通过 `POST /memories` 显式创建记忆。
+- 通过 `GET /memories` 检索可访问记忆。
+- 通过 `DELETE /memories/:id` 遗忘记忆。
+- scope 是 `USER`、`CONVERSATION`、`GLOBAL`。
+- `ContextEngineService` 构建 ContextPlan 时会按当前 query 检索 Memory，并转成 `ContextBlock(type=memory)`。
+
+真实性边界：
+
+```text
+基础 Memory 已接入 ContextPlan；
+自动从对话提取 Memory、Memory 向量检索还属于优化方向。
+```
+
 ---
 
 ## 8. 安全怎么讲
@@ -244,6 +274,7 @@ AI 系统输入不可信，风险包括：
 - `ToolCallParserService` 只接受 knownTools。
 - `ToolRegistryService` 执行前净化参数。
 - `KnowledgeBaseService.findAccessible()` 在检索前做权限过滤。
+- `ContentModerationService` 在 AI 回复落库前做敏感词拦截和手机号/身份证脱敏。
 - 前端 message-ast 安全渲染，限制危险链接协议。
 
 一句话：
@@ -270,7 +301,10 @@ AI 系统输入不可信，风险包括：
 - Agent ReAct，最多 5 步。
 - `searchKnowledgeBase` 工具。
 - Context Engine。
+- 基础 Memory REST API + ContextPlan 集成。
 - PromptGuard。
+- ContentModeration 输出审核。
+- 流式控制 API：active stream、取消生成、streamId 续传、token 统计。
 - MCP filesystem 示例。
 
 ### 要说成优化方向
@@ -281,6 +315,7 @@ AI 系统输入不可信，风险包括：
 - Agent step 持久化。
 - 更多 MCP 企业连接器。
 - LangGraph 工作流。
+- Memory 自动提取和 Memory 向量检索。
 
 ---
 
