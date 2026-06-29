@@ -11,7 +11,8 @@ import { ConversationService } from './conversation.service';
 import { StreamSessionService } from './stream-session.service';
 import { SummaryService } from './summary.service';
 import { TitleService } from './title.service';
-import { JwtQueryGuard } from './guards/jwt-query.guard';
+import { StreamTicketGuard } from './guards/stream-ticket.guard';
+import { StreamTicketService } from './stream-ticket.service';
 
 @Module({
   imports: [
@@ -29,10 +30,8 @@ import { JwtQueryGuard } from './guards/jwt-query.guard';
     StreamSessionService,
     SummaryService,
     TitleService,
-    JwtQueryGuard,
     StreamTicketService,
     StreamTicketGuard,
-    JwtUnlessUserGuard,
   ],
   exports: [
     ConversationService,

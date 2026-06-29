@@ -14,5 +14,6 @@ export const RAG_KEYWORD_BASE_SCORE = 0.72;
 export const RAG_HYBRID_BOOST = 0.12;
 export const RAG_MAX_FILE_MB = 20;
 export const QDRANT_COLLECTION = 'knowledge_base_chunks';
+export const QDRANT_MEMORY_COLLECTION = 'memories';
 
 export type KnowledgeBaseVisibility = 'private' | 'team' | 'public';

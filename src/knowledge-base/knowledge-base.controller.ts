@@ -35,6 +35,7 @@ import { UpdateKnowledgeBaseDto } from './dto/update-knowledge-base.dto';
 import { IngestService } from './ingest.service';
 import { JwtUser, KnowledgeBaseService } from './knowledge-base.service';
 import { RetrievalService } from './retrieval.service';
+import { IngestQueueService } from './ingest-queue.service';
 
 @Controller('knowledge-bases')
 @ApiTags('知识库模块')
@@ -47,6 +48,7 @@ export class KnowledgeBaseController {
     private readonly ingestService: IngestService,
     private readonly retrievalService: RetrievalService,
     private readonly qdrantService: QdrantService,
+    private readonly ingestQueueService: IngestQueueService,
   ) {}
 
   @Get()
@@ -143,10 +145,8 @@ export class KnowledgeBaseController {
       filePath: file.path,
     });
 
-    // 异步触发入库，避免大文件阻塞上传接口。
-    setImmediate(() => {
-      void this.ingestService.ingestDocumentWithRetry(document.id);
-    });
+    // 异步入库：Bull 队列持久化，进程重启不丢任务
+    await this.ingestQueueService.enqueue(document.id);
 
     return document;
   }
@@ -175,10 +175,7 @@ export class KnowledgeBaseController {
       req.user,
     );
 
-    // 异步重建索引，避免大文件阻塞请求导致前端超时。
-    setImmediate(() => {
-      void this.ingestService.ingestDocumentWithRetry(+docId);
-    });
+    await this.ingestQueueService.enqueue(+docId);
 
     return { success: true };
   }

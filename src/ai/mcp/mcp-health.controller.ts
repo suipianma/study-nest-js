@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { McpClientService } from './mcp/mcp-client.service';
+import { McpClientService } from './mcp-client.service';
 
 @ApiTags('MCP')
 @Controller('ai/mcp')

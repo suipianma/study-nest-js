@@ -31,10 +31,23 @@ describe('ContextMemoryService', () => {
       findUnique: jest.fn(),
     },
   };
+  const embeddingService = {
+    embed: jest.fn().mockRejectedValue(new Error('e2e skip vector')),
+  };
+  const qdrantService = {
+    searchMemories: jest.fn(),
+    upsertMemory: jest.fn().mockResolvedValue(undefined),
+    deleteMemory: jest.fn().mockResolvedValue(undefined),
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new ContextMemoryService(prisma as any);
+    embeddingService.embed.mockRejectedValue(new Error('e2e skip vector'));
+    service = new ContextMemoryService(
+      prisma as any,
+      embeddingService as any,
+      qdrantService as any,
+    );
   });
 
   it('普通用户仅可创建自己的私有记忆', async () => {
@@ -120,6 +133,26 @@ describe('ContextMemoryService', () => {
     );
 
     expect(prisma.memory.create).toHaveBeenCalled();
+  });
+
+  it('向量检索命中时应按相似度顺序返回', async () => {
+    embeddingService.embed.mockResolvedValue([0.1, 0.2]);
+    qdrantService.searchMemories.mockResolvedValue([
+      { id: 2, payload: { memoryId: 2 } },
+      { id: 1, payload: { memoryId: 1 } },
+    ]);
+    prisma.memory.findMany.mockResolvedValue([
+      { ...baseMemory, id: 1 },
+      { ...baseMemory, id: 2, content: '偏好 Rust' },
+    ]);
+
+    const result = await service.searchMemories(
+      { query: '编程语言' },
+      { userId: 7, role: 'user' },
+    );
+
+    expect(result.map((item) => item.id)).toEqual([2, 1]);
+    expect(qdrantService.searchMemories).toHaveBeenCalled();
   });
 
   it('查询应过滤已删除和已过期记忆', async () => {

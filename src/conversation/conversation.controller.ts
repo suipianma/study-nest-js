@@ -26,11 +26,7 @@ import { ConversationStreamService } from './conversation-stream.service';
 import { ConversationService } from './conversation.service';
 import { StreamSessionService } from './stream-session.service';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
-import { JwtQueryGuard } from './guards/jwt-query.guard';
-import {
-  JwtUnlessUserGuard,
-  StreamTicketGuard,
-} from './guards/stream-ticket.guard';
+import { StreamTicketGuard } from './guards/stream-ticket.guard';
 import { StreamTicketService } from './stream-ticket.service';
 
 interface JwtPayload {
@@ -224,8 +220,8 @@ export class ConversationController {
 
   @Sse(':id/stream')
   @SkipThrottle()
-  @UseGuards(StreamTicketGuard, JwtQueryGuard, JwtUnlessUserGuard)
-  @ApiOperation({ summary: '流式发送消息并获取 AI 回复（支持 streamId 续传）' })
+  @UseGuards(StreamTicketGuard)
+  @ApiOperation({ summary: '流式发送消息并获取 AI 回复（需 stream ticket）' })
   stream(
     @Param('id') id: string,
     @Query('content') content: string | undefined,

@@ -17,7 +17,7 @@ import { AgentContext } from '../ai/agent/agent-context.type';
 import { AiService } from '../ai/ai.service';
 import { ChatMessage } from '../ai/types/chat-message.type';
 import { resolveModelReply } from '../ai/utils/reply.util';
-import type { RagCitation } from '../../../knowledge-base/types/rag.type';
+import type { RagCitation } from '../knowledge-base/types/rag.type';
 import { ContextPlan } from '../context-engine/types/context-plan.type';
 import { ContextTraceStoreService } from '../context-engine/context-trace-store.service';
 import { wrapLegacyPayload } from './utils/stream-envelope.util';
@@ -578,14 +578,16 @@ export class ConversationStreamService {
   ): Promise<void> {
     const prev = this.progressQueues.get(streamId) ?? Promise.resolve();
     const next = prev
-      .then(() => this.streamSessionService.updateProgress(streamId, patch))
-      .catch((err) => {
+      .then(async () => {
+        await this.streamSessionService.updateProgress(streamId, patch);
+      })
+      .catch(async (err) => {
         this.logger.warn(
           `Redis 流进度写入失败，将重试一次 streamId=${streamId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
-        return this.streamSessionService.updateProgress(streamId, patch);
+        await this.streamSessionService.updateProgress(streamId, patch);
       })
       .catch((err) => {
         this.logger.error(

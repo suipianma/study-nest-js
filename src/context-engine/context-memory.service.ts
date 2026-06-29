@@ -1,11 +1,14 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Memory, MemoryScope, Prisma } from '@prisma/client';
+import { EmbeddingService } from '../embedding/embedding.service';
 import { JwtUser } from '../knowledge-base/knowledge-base.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { QdrantService } from '../vector/qdrant.service';
 import { estimateTokens } from './context-token.util';
 import { CreateMemoryDto } from './dto/create-memory.dto';
 import { SearchMemoryDto } from './dto/search-memory.dto';
@@ -13,17 +16,22 @@ import { ContextBlock } from './types/context-block.type';
 
 @Injectable()
 export class ContextMemoryService {
+  private readonly logger = new Logger(ContextMemoryService.name);
   // 记忆与历史消息（priority=100）同场竞争：高重要度记忆可优先保留。
   private readonly memoryBasePriority = 80;
   private readonly memoryImportanceStep = 4;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly embeddingService: EmbeddingService,
+    private readonly qdrantService: QdrantService,
+  ) {}
 
   async createMemory(dto: CreateMemoryDto, currentUser: JwtUser): Promise<Memory> {
     const ownerUserId = dto.ownerUserId ?? currentUser.userId;
     await this.assertCanCreate(dto, ownerUserId, currentUser);
 
-    return this.prisma.memory.create({
+    const memory = await this.prisma.memory.create({
       data: {
         ownerUserId,
         scope: dto.scope,
@@ -36,14 +44,63 @@ export class ContextMemoryService {
         sourceMessageId: dto.sourceMessageId,
       },
     });
+
+    void this.indexMemoryVector(memory).catch((error) => {
+      this.logger.warn(
+        `记忆向量索引失败 memoryId=${memory.id}: ${error instanceof Error ? error.message : 'unknown'}`,
+      );
+    });
+
+    return memory;
   }
 
-  searchMemories(query: SearchMemoryDto, currentUser: JwtUser): Promise<Memory[]> {
-    const where = this.buildSearchWhere(query, currentUser);
+  async searchMemories(
+    query: SearchMemoryDto,
+    currentUser: JwtUser,
+  ): Promise<Memory[]> {
+    const limit = query.limit ?? 10;
+    const trimmedQuery = query.query?.trim();
+    const accessWhere = this.buildSearchWhere(
+      { ...query, query: undefined },
+      currentUser,
+    );
+    const keywordWhere = this.buildSearchWhere(query, currentUser);
+
+    if (trimmedQuery) {
+      try {
+        const vector = await this.embeddingService.embed(trimmedQuery);
+        const hits = await this.qdrantService.searchMemories(
+          vector,
+          Math.max(limit * 2, 10),
+        );
+        const rankedIds = hits
+          .map((hit) => Number(hit.payload?.memoryId ?? hit.id))
+          .filter((id) => Number.isFinite(id));
+
+        if (rankedIds.length > 0) {
+          const memories = await this.prisma.memory.findMany({
+            where: { AND: [accessWhere, { id: { in: rankedIds } }] },
+          });
+          const byId = new Map(memories.map((item) => [item.id, item]));
+          const ordered = rankedIds
+            .map((id) => byId.get(id))
+            .filter((item): item is Memory => Boolean(item))
+            .slice(0, limit);
+          if (ordered.length > 0) {
+            return ordered;
+          }
+        }
+      } catch (error) {
+        this.logger.warn(
+          `记忆向量检索失败，降级关键词: ${error instanceof Error ? error.message : 'unknown'}`,
+        );
+      }
+    }
+
     return this.prisma.memory.findMany({
-      where,
+      where: keywordWhere,
       orderBy: [{ importance: 'desc' }, { updatedAt: 'desc' }],
-      take: query.limit ?? 10,
+      take: limit,
     });
   }
 
@@ -54,10 +111,18 @@ export class ContextMemoryService {
     }
 
     this.assertCanForget(memory, currentUser);
-    return this.prisma.memory.update({
+    const updated = await this.prisma.memory.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
+
+    void this.qdrantService.deleteMemory(id).catch((error) => {
+      this.logger.warn(
+        `删除记忆向量失败 memoryId=${id}: ${error instanceof Error ? error.message : 'unknown'}`,
+      );
+    });
+
+    return updated;
   }
 
   toContextBlocks(memories: Memory[]): ContextBlock[] {
@@ -79,6 +144,19 @@ export class ContextMemoryService {
           category: memory.category,
         },
       };
+    });
+  }
+
+  private async indexMemoryVector(memory: Memory): Promise<void> {
+    const vector = await this.embeddingService.embed(memory.content);
+    await this.qdrantService.upsertMemory({
+      memoryId: memory.id,
+      vector,
+      payload: {
+        memoryId: memory.id,
+        ownerUserId: memory.ownerUserId,
+        scope: memory.scope,
+      },
     });
   }
 

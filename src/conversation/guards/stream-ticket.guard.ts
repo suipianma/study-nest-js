@@ -1,8 +1,8 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Request } from 'express';
 import { StreamTicketService } from '../stream-ticket.service';
 
+/** SSE 仅允许一次性 stream ticket 鉴权（不再支持 URL token 回退） */
 @Injectable()
 export class StreamTicketGuard implements CanActivate {
   constructor(private readonly streamTicketService: StreamTicketService) {}
@@ -14,12 +14,13 @@ export class StreamTicketGuard implements CanActivate {
 
     const ticket = request.query.ticket;
     const conversationId = Number(request.params.id);
+
     if (
       typeof ticket !== 'string' ||
       !ticket.trim() ||
       !Number.isFinite(conversationId)
     ) {
-      return true;
+      throw new UnauthorizedException('缺少有效的流式 ticket');
     }
 
     const resolved = await this.streamTicketService.resolveTicket(
@@ -32,17 +33,5 @@ export class StreamTicketGuard implements CanActivate {
       role: 'user',
     };
     return true;
-  }
-}
-
-/** ticket 已注入 user 时跳过 JWT 校验 */
-@Injectable()
-export class JwtUnlessUserGuard extends AuthGuard('jwt') {
-  canActivate(context: ExecutionContext) {
-    const request = context.switchToHttp().getRequest<{ user?: unknown }>();
-    if (request.user) {
-      return true;
-    }
-    return super.canActivate(context) as boolean | Promise<boolean>;
   }
 }

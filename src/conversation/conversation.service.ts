@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Conversation, Message } from '@prisma/client';
+import { Conversation, Message, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MAX_MESSAGES, MESSAGE_PAGE_SIZE } from './constants';
 import {
@@ -247,7 +247,7 @@ export class ConversationService {
         fromCache: data.fromCache ?? false,
         promptTokens: data.promptTokens,
         completionTokens: data.completionTokens,
-        metadata: data.metadata ?? undefined,
+        metadata: (data.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
       },
     });
   }
@@ -396,7 +396,7 @@ export class ConversationService {
 
     return this.prisma.message.update({
       where: { id: messageId },
-      data: { metadata: nextMetadata },
+      data: { metadata: nextMetadata as Prisma.InputJsonValue },
     });
   }
 

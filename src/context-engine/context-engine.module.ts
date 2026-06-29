@@ -1,8 +1,10 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { EmbeddingModule } from '../embedding/embedding.module';
 import { KnowledgeBaseModule } from '../knowledge-base/knowledge-base.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RedisModule } from '../redis/redis.module';
+import { VectorModule } from '../vector/vector.module';
 import { ContextComposerService } from './context-composer.service';
 import { ContextEngineService } from './context-engine.service';
 import { ContextMemoryService } from './context-memory.service';
@@ -18,6 +20,8 @@ import { TokenBudgetManager } from './token-budget.manager';
     KnowledgeBaseModule,
     PrismaModule,
     RedisModule,
+    EmbeddingModule,
+    VectorModule,
   ],
   controllers: [ContextMemoryController],
   providers: [

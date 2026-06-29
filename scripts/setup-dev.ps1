@@ -33,7 +33,7 @@ Require-Command pnpm
 Require-Command npm
 Require-Command docker
 
-Write-Host "`n[1/4] 启动 MySQL + Redis (Docker)..." -ForegroundColor Green
+Write-Host "`n[1/4] 启动 MySQL + Redis + Qdrant (Docker)..." -ForegroundColor Green
 Set-Location $BackendRoot
 pnpm install
 pnpm run docker:infra

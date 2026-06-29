@@ -14,6 +14,7 @@ import { ContextTraceService } from './context-trace.service';
 import { ContextMemoryService } from './context-memory.service';
 import { ContextPruningService } from './context-pruning.service';
 import { RagChunk } from '../knowledge-base/types/rag.type';
+import { ContextBlock, ContextRole } from './types/context-block.type';
 import { ContextPlan } from './types/context-plan.type';
 import { createToolContextBlock } from './tool-context.util';
 
