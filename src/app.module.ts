@@ -18,11 +18,13 @@ import { ChatModule } from './chat/chat.module';
 import { AiModule } from './ai/ai.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { ContextEngineModule } from './context-engine/context-engine.module';
+import { MetricsModule } from './common/metrics/metrics.module';
 import { SecurityModule } from './security/security.module';
 
 @Module({
   imports: [
     SecurityModule,
+    MetricsModule,
     ConfigModule.forRoot({
       isGlobal: true,
       ignoreEnvFile: true,

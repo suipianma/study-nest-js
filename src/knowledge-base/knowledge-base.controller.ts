@@ -145,7 +145,7 @@ export class KnowledgeBaseController {
 
     // 异步触发入库，避免大文件阻塞上传接口。
     setImmediate(() => {
-      void this.ingestService.ingestDocument(document.id);
+      void this.ingestService.ingestDocumentWithRetry(document.id);
     });
 
     return document;
@@ -177,7 +177,7 @@ export class KnowledgeBaseController {
 
     // 异步重建索引，避免大文件阻塞请求导致前端超时。
     setImmediate(() => {
-      void this.ingestService.ingestDocument(+docId);
+      void this.ingestService.ingestDocumentWithRetry(+docId);
     });
 
     return { success: true };

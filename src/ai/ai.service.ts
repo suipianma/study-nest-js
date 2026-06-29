@@ -16,6 +16,7 @@ interface StreamPayload {
 
 export interface AiCallOptions {
   skipCache?: boolean;
+  model?: string;
 }
 
 @Injectable()
@@ -35,7 +36,7 @@ export class AiService {
       if (cached) return cached;
     }
 
-    const result = await this.provider.chat(messages);
+    const result = await this.provider.chat(messages, options?.model);
     if (!options?.skipCache) {
       await this.cacheService.set(messages, result, summary);
     }
@@ -69,7 +70,7 @@ export class AiService {
           }
         }
 
-        subscription = this.provider.streamChat(messages).subscribe({
+        subscription = this.provider.streamChat(messages, options?.model).subscribe({
           next: (event) => {
             const payload = this.parseStreamPayload(event.data);
             if (payload.thinkingDelta) thinking += payload.thinkingDelta;

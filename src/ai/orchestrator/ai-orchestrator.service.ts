@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { ConversationStreamService } from '../../conversation/conversation-stream.service';
+import { MetricsService } from '../../common/metrics/metrics.service';
 import { createEmptyPipelineContext } from './types/pipeline-context.type';
 import { PipelineInput } from './types/pipeline-input.type';
 import { ContextStage } from './stages/context.stage';
@@ -12,6 +13,8 @@ import { ToolStage } from './stages/tool.stage';
 
 @Injectable()
 export class AiOrchestratorService {
+  private readonly logger = new Logger(AiOrchestratorService.name);
+
   constructor(
     private readonly inputStage: InputStage,
     private readonly contextStage: ContextStage,
@@ -20,6 +23,7 @@ export class AiOrchestratorService {
     private readonly toolStage: ToolStage,
     private readonly streamStage: StreamStage,
     private readonly conversationStreamService: ConversationStreamService,
+    private readonly metrics: MetricsService,
   ) {}
 
   private get stages() {
@@ -37,8 +41,17 @@ export class AiOrchestratorService {
     const ctx = createEmptyPipelineContext();
 
     for (const stage of this.stages) {
+      const startedAt = Date.now();
       await stage.execute(ctx, input);
+      ctx.stageTimings[stage.name] = Date.now() - startedAt;
+      this.metrics.observe(`pipeline_stage_ms_${stage.name}`, ctx.stageTimings[stage.name]);
     }
+
+    this.metrics.increment('pipeline_runs_total');
+
+    this.logger.debug(
+      `Pipeline timings ms: ${JSON.stringify(ctx.stageTimings)}`,
+    );
 
     return this.streamStage.observe(ctx, input);
   }

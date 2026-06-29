@@ -58,17 +58,17 @@ export class OllamaProvider implements AIProvider {
     return undefined;
   }
 
-  private buildChatBody(messages: ChatMessage[], stream: boolean) {
+  private buildChatBody(messages: ChatMessage[], stream: boolean, modelOverride?: string) {
     const { model, think } = this.getOllamaConfig();
     return {
-      model,
+      model: modelOverride?.trim() || model,
       messages,
       stream,
       ...(think !== undefined ? { think } : {}),
     };
   }
 
-  async chat(messages: ChatMessage[]): Promise<ChatReply> {
+  async chat(messages: ChatMessage[], modelOverride?: string): Promise<ChatReply> {
     const { baseUrl } = this.getOllamaConfig();
 
     let res: Response;
@@ -76,7 +76,7 @@ export class OllamaProvider implements AIProvider {
       res = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.buildChatBody(messages, false)),
+        body: JSON.stringify(this.buildChatBody(messages, false, modelOverride)),
         signal: AbortSignal.timeout(OLLAMA_CHAT_TIMEOUT_MS),
       });
     } catch (error) {
@@ -101,7 +101,7 @@ export class OllamaProvider implements AIProvider {
     return resolveModelReply(rawThinking, rawResponse);
   }
 
-  streamChat(messages: ChatMessage[]): Observable<MessageEvent> {
+  streamChat(messages: ChatMessage[], modelOverride?: string): Observable<MessageEvent> {
     const { baseUrl } = this.getOllamaConfig();
 
     return new Observable((subscriber) => {
@@ -118,7 +118,7 @@ export class OllamaProvider implements AIProvider {
       fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.buildChatBody(messages, true)),
+        body: JSON.stringify(this.buildChatBody(messages, true, modelOverride)),
         signal: abortController.signal,
       })
         .then(async (res) => {

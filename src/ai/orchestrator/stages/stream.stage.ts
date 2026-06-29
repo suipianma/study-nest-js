@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { ConversationStreamService } from '../../../conversation/conversation-stream.service';
+import { RetrievalService } from '../../../knowledge-base/retrieval.service';
 import { StreamSessionService } from '../../../conversation/stream-session.service';
 import { PipelineContext } from '../types/pipeline-context.type';
 import { PipelineInput } from '../types/pipeline-input.type';
@@ -13,6 +14,7 @@ export class StreamStage implements PipelineStage {
   constructor(
     private readonly streamSessionService: StreamSessionService,
     private readonly conversationStreamService: ConversationStreamService,
+    private readonly retrievalService: RetrievalService,
   ) {}
 
   async execute(ctx: PipelineContext, input: PipelineInput): Promise<void> {
@@ -28,6 +30,7 @@ export class StreamStage implements PipelineStage {
     this.conversationStreamService.startDetachedGeneration({
       streamId: session.streamId,
       conversationId: input.conversationId,
+      userId: input.userId,
       userMessageContent: ctx.messageContent,
       isFirstAiReply: ctx.isFirstAiReply,
       contextPlan: ctx.contextPlan,
@@ -35,6 +38,8 @@ export class StreamStage implements PipelineStage {
       summary: ctx.summary,
       executionMode: ctx.executionMode,
       agentContext: ctx.agentContext,
+      ragCitations: this.retrievalService.toCitations(ctx.ragChunks),
+      stageTimings: { ...ctx.stageTimings },
     });
   }
 

@@ -13,7 +13,7 @@ import { estimateTokens } from './context-token.util';
 import { ContextTraceService } from './context-trace.service';
 import { ContextMemoryService } from './context-memory.service';
 import { ContextPruningService } from './context-pruning.service';
-import { ContextBlock, ContextRole } from './types/context-block.type';
+import { RagChunk } from '../knowledge-base/types/rag.type';
 import { ContextPlan } from './types/context-plan.type';
 import { createToolContextBlock } from './tool-context.util';
 
@@ -171,6 +171,60 @@ export class ContextEngineService {
       { injectPrompt: true, promptId },
       conversation,
     );
+  }
+
+  /** 供 RAG Stage 构建检索块（单次检索，避免重复 search） */
+  async buildRagWithChunks(
+    conversation: Conversation,
+    dbMessages: Message[],
+    options: {
+      knowledgeBaseIds?: number[];
+      currentUser?: JwtUser;
+      currentUserMessage?: string;
+    },
+  ): Promise<{ blocks: ContextBlock[]; chunks: RagChunk[] }> {
+    const currentUser = options.currentUser;
+    if (!currentUser) {
+      return { blocks: [], chunks: [] };
+    }
+
+    const query = this.resolveLatestUserQuery(
+      dbMessages,
+      options.currentUserMessage,
+    );
+    if (!query) {
+      return { blocks: [], chunks: [] };
+    }
+
+    const chunks = await this.retrievalService.search(
+      query,
+      options.knowledgeBaseIds,
+      currentUser,
+    );
+
+    const blocks = chunks.map((chunk, index) => {
+      const content = this.buildRagBlockContent(
+        chunk.documentName,
+        chunk.page,
+        chunk.content,
+      );
+      return {
+        id: `rag-${chunk.chunkId}-${index}`,
+        type: 'rag' as const,
+        role: 'user' as const,
+        content,
+        priority: 700,
+        estimatedTokens: estimateTokens(content),
+        source: 'knowledge-base.retrieval',
+        metadata: {
+          conversationId: conversation.id,
+          knowledgeBaseId: chunk.knowledgeBaseId,
+          documentName: chunk.documentName,
+        },
+      };
+    });
+
+    return { blocks, chunks };
   }
 
   /** 供 RAG Stage 构建检索块 */

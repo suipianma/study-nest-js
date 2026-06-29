@@ -6,4 +6,5 @@ export interface PipelineInput {
   promptId?: string;
   knowledgeBaseIds?: number[];
   isRegenerate?: boolean;
+  model?: string;
 }

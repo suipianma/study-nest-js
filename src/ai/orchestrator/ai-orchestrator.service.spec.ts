@@ -36,6 +36,11 @@ describe('AiOrchestratorService', () => {
     content: '你好',
   };
 
+  const metrics = {
+    observe: jest.fn(),
+    increment: jest.fn(),
+  };
+
   beforeEach(() => {
     order.length = 0;
     jest.clearAllMocks();
@@ -47,6 +52,7 @@ describe('AiOrchestratorService', () => {
       toolStage as any,
       streamStage as any,
       conversationStreamService as any,
+      metrics as any,
     );
   });
 

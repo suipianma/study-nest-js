@@ -10,6 +10,7 @@ import { ToolPromptService } from './tools/tool-prompt.service';
 import { ToolRegistryService } from './tools/tool-registry.service';
 import { AgentRouterService } from './agent/agent-router.service';
 import { AgentOrchestratorService } from './agent/agent-orchestrator.service';
+import { McpHealthController } from './mcp/mcp-health.controller';
 import { McpClientService } from './mcp/mcp-client.service';
 import { McpToolBridgeService } from './mcp/mcp-tool-bridge.service';
 import { ContextEngineModule } from '../context-engine/context-engine.module';
@@ -36,7 +37,7 @@ import { RedisModule } from '../redis/redis.module';
     McpClientService,
     McpToolBridgeService,
   ],
-  controllers: [AiController],
+  controllers: [AiController, McpHealthController],
   exports: [
     AiService,
     PromptTemplateService,

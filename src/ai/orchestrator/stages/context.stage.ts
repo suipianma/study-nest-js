@@ -19,6 +19,7 @@ export class ContextStage implements PipelineStage {
         skipRag: true,
         currentUserMessage: ctx.messageContent,
         currentUser: { userId: input.userId, role: input.role },
+        model: input.model,
       },
     );
   }

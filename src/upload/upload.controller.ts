@@ -1,16 +1,18 @@
-import { Controller, Post, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { Controller, Post, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { diskStorage } from 'multer';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';import { diskStorage } from 'multer';
 import { decodeMulterOriginalName } from '../common/utils/multer-filename.util';
 
 @Controller('upload')
 @ApiTags('上传模块')
+@ApiBearerAuth()
 export class UploadController {
   constructor(private readonly configService: ConfigService) {}
 
   @Post()
+  @UseGuards(AuthGuard('jwt'))
   @ApiOperation({ summary: '上传文件' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

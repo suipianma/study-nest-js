@@ -110,6 +110,29 @@ export class IngestService {
     }
   }
 
+  async ingestDocumentWithRetry(
+    documentId: number,
+    maxAttempts = 3,
+  ): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await this.ingestDocument(documentId);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < maxAttempts) {
+          await this.prisma.document.update({
+            where: { id: documentId },
+            data: { status: 'pending', errorMessage: null },
+          });
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        }
+      }
+    }
+    throw lastError;
+  }
+
   async deleteDocumentVectors(documentId: number): Promise<void> {
     const chunks = await this.prisma.chunk.findMany({
       where: { documentId },

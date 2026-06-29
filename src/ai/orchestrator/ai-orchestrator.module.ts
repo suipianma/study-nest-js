@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { AiModule } from '../ai.module';
 import { ContextEngineModule } from '../../context-engine/context-engine.module';
 import { ConversationModule } from '../../conversation/conversation.module';
+import { KnowledgeBaseModule } from '../../knowledge-base/knowledge-base.module';
 import { SecurityModule } from '../../security/security.module';
 import { AiOrchestratorService } from './ai-orchestrator.service';
 import { ContextStage } from './stages/context.stage';
@@ -15,6 +16,7 @@ import { ToolStage } from './stages/tool.stage';
   imports: [
     AiModule,
     ContextEngineModule,
+    KnowledgeBaseModule,
     SecurityModule,
     forwardRef(() => ConversationModule),
   ],

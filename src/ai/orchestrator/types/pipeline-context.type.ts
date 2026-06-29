@@ -27,6 +27,7 @@ export interface PipelineContext {
 
   streamId: string;
   isFirstAiReply: boolean;
+  stageTimings: Record<string, number>;
 }
 
 export function createEmptyPipelineContext(): PipelineContext {
@@ -45,5 +46,6 @@ export function createEmptyPipelineContext(): PipelineContext {
     agentContext: { userId: 0, role: 'user', knowledgeBaseIds: [] },
     streamId: '',
     isFirstAiReply: false,
+    stageTimings: {},
   };
 }

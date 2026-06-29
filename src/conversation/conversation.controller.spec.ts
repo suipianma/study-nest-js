@@ -2,10 +2,12 @@ import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { lastValueFrom, of } from 'rxjs';
 import { AiOrchestratorService } from '../ai/orchestrator/ai-orchestrator.service';
+import { ContextTraceStoreService } from '../context-engine/context-trace-store.service';
 import { ConversationStreamService } from './conversation-stream.service';
 import { ConversationController } from './conversation.controller';
 import { ConversationService } from './conversation.service';
 import { StreamSessionService } from './stream-session.service';
+import { StreamTicketService } from './stream-ticket.service';
 
 describe('ConversationController orchestrator integration', () => {
   let moduleRef: TestingModule;
@@ -37,6 +39,15 @@ describe('ConversationController orchestrator integration', () => {
     toPublicSnapshot: jest.fn(),
   };
 
+  const contextTraceStore = {
+    get: jest.fn(),
+  };
+
+  const streamTicketService = {
+    createTicket: jest.fn().mockResolvedValue({ ticket: 't-1', expiresIn: 120 }),
+    resolveTicket: jest.fn(),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
     moduleRef = await Test.createTestingModule({
@@ -46,6 +57,8 @@ describe('ConversationController orchestrator integration', () => {
         { provide: AiOrchestratorService, useValue: aiOrchestrator },
         { provide: StreamSessionService, useValue: streamSessionService },
         { provide: ConversationStreamService, useValue: conversationStreamService },
+        { provide: ContextTraceStoreService, useValue: contextTraceStore },
+        { provide: StreamTicketService, useValue: streamTicketService },
       ],
     }).compile();
 
@@ -65,6 +78,7 @@ describe('ConversationController orchestrator integration', () => {
       undefined,
       '1,2',
       undefined,
+      undefined,
       req as any,
     );
 
@@ -77,6 +91,7 @@ describe('ConversationController orchestrator integration', () => {
       promptId: undefined,
       knowledgeBaseIds: [1, 2],
       isRegenerate: false,
+      model: undefined,
     });
     expect(event.data).toEqual(
       expect.objectContaining({ response: 'ok', done: true }),
@@ -92,6 +107,7 @@ describe('ConversationController orchestrator integration', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       req as any,
     );
 
@@ -103,7 +119,7 @@ describe('ConversationController orchestrator integration', () => {
   it('content 为空时应抛 BadRequestException', () => {
     const req = { user: { userId: 100, username: 'u', role: 'user' } };
     expect(() =>
-      controller.stream('1', '', undefined, undefined, undefined, undefined, req as any),
+      controller.stream('1', '', undefined, undefined, undefined, undefined, undefined, req as any),
     ).toThrow(BadRequestException);
   });
 });

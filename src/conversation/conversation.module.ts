@@ -30,6 +30,9 @@ import { JwtQueryGuard } from './guards/jwt-query.guard';
     SummaryService,
     TitleService,
     JwtQueryGuard,
+    StreamTicketService,
+    StreamTicketGuard,
+    JwtUnlessUserGuard,
   ],
   exports: [
     ConversationService,

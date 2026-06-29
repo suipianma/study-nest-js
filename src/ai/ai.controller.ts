@@ -23,6 +23,7 @@ export class AiController {
   }
 
   @Post('chat')
+  @UseGuards(AuthGuard('jwt'))
   async chat(@Body() body: ChatDto): Promise<ChatReply> {
     return await this.aiService.chat([
       { role: 'user', content: body.prompt },

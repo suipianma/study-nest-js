@@ -41,6 +41,7 @@ model Conversation {
   summary              String?   @db.Text
   summarizedMessageId  Int?
   promptTemplateId     String?   @db.VarChar(50)
+  pinnedAt             DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
   messages             Message[]
@@ -58,6 +59,7 @@ model Message {
   fromCache        Boolean      @default(false)
   promptTokens     Int?
   completionTokens Int?
+  metadata         Json?
   createdAt        DateTime     @default(now())
   conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sourceMemories   Memory[]     @relation("MemorySourceMessage")

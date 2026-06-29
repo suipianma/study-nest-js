@@ -15,7 +15,7 @@ export class RagStage implements PipelineStage {
       return;
     }
 
-    const ragBlocks = await this.contextEngine.buildRagBlocks(
+    const { blocks, chunks } = await this.contextEngine.buildRagWithChunks(
       ctx.conversation,
       ctx.messages,
       {
@@ -25,15 +25,16 @@ export class RagStage implements PipelineStage {
       },
     );
 
-    if (ragBlocks.length === 0) {
+    ctx.ragChunks = chunks;
+
+    if (blocks.length === 0) {
       return;
     }
 
-    ctx.ragChunks = [];
     ctx.contextPlan = this.contextEngine.enrichPlan(
       ctx.conversation,
       ctx.contextPlan,
-      ragBlocks,
+      blocks,
     );
   }
 }

@@ -35,11 +35,21 @@ export interface TokenUsageStats {
 export class ConversationService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** 按更新时间倒序获取用户会话列表 */
-  findAllByUser(userId: number): Promise<Conversation[]> {
+  /** 按更新时间倒序获取用户会话列表（置顶优先，支持标题搜索） */
+  findAllByUser(userId: number, search?: string): Promise<Conversation[]> {
+    const q = search?.trim();
     return this.prisma.conversation.findMany({
-      where: { userId },
-      orderBy: { updatedAt: 'desc' },
+      where: {
+        userId,
+        ...(q
+          ? {
+              title: {
+                contains: q,
+              },
+            }
+          : {}),
+      },
+      orderBy: [{ pinnedAt: 'desc' }, { updatedAt: 'desc' }],
     });
   }
 
@@ -225,6 +235,7 @@ export class ConversationService {
       fromCache?: boolean;
       promptTokens?: number;
       completionTokens?: number;
+      metadata?: import('./types/message-metadata.type').MessageMetadata;
     },
   ): Promise<Message> {
     return this.prisma.message.create({
@@ -236,6 +247,7 @@ export class ConversationService {
         fromCache: data.fromCache ?? false,
         promptTokens: data.promptTokens,
         completionTokens: data.completionTokens,
+        metadata: data.metadata ?? undefined,
       },
     });
   }
@@ -325,6 +337,66 @@ export class ConversationService {
     return this.prisma.conversation.update({
       where: { id: conversationId },
       data: { updatedAt: new Date() },
+    });
+  }
+
+  /** 置顶 / 取消置顶会话 */
+  async setPinned(
+    id: number,
+    userId: number,
+    pinned: boolean,
+  ): Promise<Conversation> {
+    await this.findOneOrFail(id, userId);
+    return this.prisma.conversation.update({
+      where: { id },
+      data: { pinnedAt: pinned ? new Date() : null },
+    });
+  }
+
+  /** 导出会话消息为 JSON */
+  async exportConversation(conversationId: number, userId: number) {
+    const conversation = await this.findOneOrFail(conversationId, userId);
+    const messages = await this.getMessages(conversationId, userId);
+    return {
+      conversation: {
+        id: conversation.id,
+        title: conversation.title,
+        summary: conversation.summary,
+        createdAt: conversation.createdAt,
+        updatedAt: conversation.updatedAt,
+        pinnedAt: conversation.pinnedAt,
+      },
+      messages,
+      exportedAt: new Date().toISOString(),
+    };
+  }
+
+  /** 消息反馈（点赞/点踩） */
+  async setMessageFeedback(
+    conversationId: number,
+    userId: number,
+    messageId: number,
+    feedback: 'up' | 'down' | null,
+  ): Promise<Message> {
+    await this.findOneOrFail(conversationId, userId);
+    const msg = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId, role: 'assistant' },
+    });
+    if (!msg) {
+      throw new NotFoundException('助手消息不存在');
+    }
+
+    const metadata = (msg.metadata as import('./types/message-metadata.type').MessageMetadata | null) ?? {};
+    const nextMetadata = { ...metadata };
+    if (feedback) {
+      nextMetadata.feedback = feedback;
+    } else {
+      delete nextMetadata.feedback;
+    }
+
+    return this.prisma.message.update({
+      where: { id: messageId },
+      data: { metadata: nextMetadata },
     });
   }
 

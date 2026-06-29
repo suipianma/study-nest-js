@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -16,7 +17,11 @@ import { AgentContext } from '../ai/agent/agent-context.type';
 import { AiService } from '../ai/ai.service';
 import { ChatMessage } from '../ai/types/chat-message.type';
 import { resolveModelReply } from '../ai/utils/reply.util';
+import type { RagCitation } from '../../../knowledge-base/types/rag.type';
 import { ContextPlan } from '../context-engine/types/context-plan.type';
+import { ContextTraceStoreService } from '../context-engine/context-trace-store.service';
+import { wrapLegacyPayload } from './utils/stream-envelope.util';
+import type { StreamEventEnvelope } from './types/stream-event-envelope.type';
 import { ContentModerationService } from '../security/content-moderation.service';
 import { ConversationService } from './conversation.service';
 import { StreamSessionService } from './stream-session.service';
@@ -25,10 +30,12 @@ import { TitleService } from './title.service';
 import { StreamSessionSnapshot } from './types/stream-session.type';
 import type { StreamSession } from './types/stream-session.type';
 import type { ExecutionMode } from '../ai/orchestrator/types/pipeline-context.type';
+import { MessageMetadata } from './types/message-metadata.type';
 
 interface StreamGenerationContext {
   streamId: string;
   conversationId: number;
+  userId: number;
   userMessageContent: string;
   isFirstAiReply: boolean;
   contextPlan: ContextPlan;
@@ -36,6 +43,8 @@ interface StreamGenerationContext {
   summary: string | null;
   executionMode: ExecutionMode;
   agentContext: AgentContext;
+  ragCitations?: RagCitation[];
+  stageTimings?: Record<string, number>;
 }
 
 interface StreamPayload {
@@ -52,7 +61,8 @@ interface StreamPayload {
     | 'tool_result'
     | 'agent_start'
     | 'agent_step'
-    | 'agent_done';
+    | 'agent_done'
+    | 'rag_citations';
   tool?: string;
   args?: Record<string, string>;
   result?: string;
@@ -64,6 +74,7 @@ interface StreamPayload {
   maxSteps?: number;
   steps?: number;
   seq?: number;
+  citations?: RagCitation[];
 }
 
 type ProgressPatch = Partial<
@@ -75,12 +86,16 @@ type ProgressPatch = Partial<
 
 @Injectable()
 export class ConversationStreamService {
+  private readonly logger = new Logger(ConversationStreamService.name);
   /** 断线续传兜底轮询间隔 */
   private readonly observeFallbackMs = 1000;
   /** Redis 快照节流，供刷新/断线恢复 */
   private readonly redisFlushMs = 120;
 
-  private readonly streamSubjects = new Map<string, Subject<StreamPayload>>();
+  private readonly streamSubjects = new Map<
+    string,
+    Subject<StreamEventEnvelope | StreamPayload>
+  >();
   private readonly generationSubs = new Map<string, { unsubscribe: () => void }>();
   private readonly cancelledStreams = new Set<string>();
   private readonly progressQueues = new Map<string, Promise<void>>();
@@ -95,6 +110,7 @@ export class ConversationStreamService {
     private readonly summaryService: SummaryService,
     private readonly titleService: TitleService,
     private readonly contentModeration: ContentModerationService,
+    private readonly contextTraceStore: ContextTraceStoreService,
   ) {}
 
   observeSession(
@@ -107,7 +123,9 @@ export class ConversationStreamService {
       let lastSeq = -1;
 
       const emitDoneIfNeeded = (payload: StreamPayload) => {
-        subscriber.next({ data: payload } as MessageEvent);
+        subscriber.next({
+          data: wrapLegacyPayload({ ...payload, streamId }),
+        } as MessageEvent);
         if (payload.done || payload.error) {
           stopped = true;
           subscriber.complete();
@@ -242,6 +260,23 @@ export class ConversationStreamService {
       tracePayload({ streamId: context.streamId }),
     );
 
+    void this.contextTraceStore.save(
+      context.userId,
+      context.conversationId,
+      context.contextPlan,
+      { stageTimings: context.stageTimings },
+    );
+
+    if (context.ragCitations?.length) {
+      this.emitLive(
+        context.streamId,
+        tracePayload({
+          phase: 'rag_citations',
+          citations: context.ragCitations,
+        }),
+      );
+    }
+
     let thinking = '';
     let response = '';
     let fromCache = false;
@@ -249,6 +284,7 @@ export class ConversationStreamService {
     let completionTokens: number | undefined;
     let finishedNormally = false;
     let endedByError = false;
+    const metadata: MessageMetadata = { toolCalls: [], agentSteps: [] };
 
     const subscription = this.resolveStreamObservable(context)
       .pipe(
@@ -256,6 +292,7 @@ export class ConversationStreamService {
           const payload = this.parseStreamPayload(event.data);
 
           if (payload.phase) {
+            this.collectStreamArtifacts(metadata, payload);
             this.emitLive(context.streamId, tracePayload(payload));
             return;
           }
@@ -327,6 +364,7 @@ export class ConversationStreamService {
             completionTokens,
             finishedNormally,
             endedByError,
+            metadata: this.hasStreamMetadata(metadata) ? metadata : undefined,
           });
         }),
       )
@@ -352,6 +390,7 @@ export class ConversationStreamService {
 
     return this.aiService.streamChat(context.ollamaMessages, context.summary, {
       skipCache: true,
+      model: context.contextPlan.model,
     });
   }
 
@@ -367,6 +406,7 @@ export class ConversationStreamService {
     completionTokens?: number;
     finishedNormally: boolean;
     endedByError: boolean;
+    metadata?: MessageMetadata;
   }): Promise<void> {
     const wasCancelled = this.cancelledStreams.delete(options.streamId);
     this.generationSubs.delete(options.streamId);
@@ -413,6 +453,7 @@ export class ConversationStreamService {
         fromCache: options.fromCache,
         promptTokens: options.fromCache ? 0 : options.promptTokens,
         completionTokens: options.fromCache ? 0 : options.completionTokens,
+        metadata: options.metadata,
       });
       await this.conversationService.touchUpdatedAt(options.conversationId);
 
@@ -465,7 +506,9 @@ export class ConversationStreamService {
     this.completeSubject(options.streamId);
   }
 
-  private getOrCreateSubject(streamId: string): Subject<StreamPayload> {
+  private getOrCreateSubject(
+    streamId: string,
+  ): Subject<StreamEventEnvelope | StreamPayload> {
     let subject = this.streamSubjects.get(streamId);
     if (!subject || subject.closed) {
       subject = new Subject<StreamPayload>();
@@ -477,7 +520,7 @@ export class ConversationStreamService {
   private emitLive(streamId: string, payload: StreamPayload): void {
     const subject = this.streamSubjects.get(streamId);
     if (subject && !subject.closed) {
-      subject.next(payload);
+      subject.next(wrapLegacyPayload({ ...payload, streamId }));
     }
   }
 
@@ -536,8 +579,21 @@ export class ConversationStreamService {
     const prev = this.progressQueues.get(streamId) ?? Promise.resolve();
     const next = prev
       .then(() => this.streamSessionService.updateProgress(streamId, patch))
-      .then(() => undefined)
-      .catch(() => undefined);
+      .catch((err) => {
+        this.logger.warn(
+          `Redis 流进度写入失败，将重试一次 streamId=${streamId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        return this.streamSessionService.updateProgress(streamId, patch);
+      })
+      .catch((err) => {
+        this.logger.error(
+          `Redis 流进度写入重试仍失败 streamId=${streamId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
     this.progressQueues.set(streamId, next);
     return next;
   }
@@ -588,5 +644,83 @@ export class ConversationStreamService {
       return err.message;
     }
     return 'AI 服务异常，请稍后重试';
+  }
+
+  private collectStreamArtifacts(
+    metadata: MessageMetadata,
+    payload: StreamPayload,
+  ): void {
+    if (!metadata.toolCalls) metadata.toolCalls = [];
+    if (!metadata.agentSteps) metadata.agentSteps = [];
+
+    if (payload.phase === 'agent_start') {
+      metadata.agentSteps.push({
+        type: 'start',
+        maxSteps: payload.maxSteps,
+      });
+      return;
+    }
+
+    if (payload.phase === 'agent_step') {
+      metadata.agentSteps.push({
+        type: 'step',
+        step: payload.step,
+        maxSteps: payload.maxSteps,
+      });
+      return;
+    }
+
+    if (payload.phase === 'agent_done') {
+      metadata.agentSteps.push({
+        type: 'done',
+        totalSteps: payload.steps,
+      });
+      return;
+    }
+
+    if (payload.phase === 'tool_call' && payload.tool && payload.args) {
+      metadata.toolCalls.push({
+        tool: payload.tool,
+        args: payload.args,
+        status: 'calling',
+        toolCallId: payload.toolCallId,
+      });
+      return;
+    }
+
+    if (payload.phase === 'tool_result' && payload.tool) {
+      const item = [...metadata.toolCalls]
+        .reverse()
+        .find(
+          (call) =>
+            call.tool === payload.tool &&
+            call.status === 'calling' &&
+            (payload.toolCallId == null ||
+              call.toolCallId === payload.toolCallId),
+        );
+      if (item) {
+        item.status = payload.error ? 'error' : 'done';
+        item.result = payload.result;
+      }
+      return;
+    }
+
+    if (payload.phase === 'rag_citations' && payload.citations?.length) {
+      metadata.citations = payload.citations.map((item) => ({
+        chunkId: item.chunkId,
+        documentName: item.documentName,
+        page: item.page,
+        snippet: item.snippet,
+        score: item.score,
+      }));
+    }
+  }
+
+  private hasStreamMetadata(metadata: MessageMetadata): boolean {
+    return (
+      (metadata.toolCalls?.length ?? 0) > 0 ||
+      (metadata.agentSteps?.length ?? 0) > 0 ||
+      (metadata.citations?.length ?? 0) > 0
+    );
   }
 }

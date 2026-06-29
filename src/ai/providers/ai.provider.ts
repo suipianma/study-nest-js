@@ -7,6 +7,9 @@ export interface ChatReply {
 }
 
 export interface AIProvider {
-  chat(messages: ChatMessage[]): Promise<ChatReply>;
-  streamChat(messages: ChatMessage[]): Observable<MessageEvent>;
+  chat(messages: ChatMessage[], modelOverride?: string): Promise<ChatReply>;
+  streamChat(
+    messages: ChatMessage[],
+    modelOverride?: string,
+  ): Observable<MessageEvent>;
 }
